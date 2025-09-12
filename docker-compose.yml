@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  fhir-mcp-bridge:
+    build: .
+    ports:
+      - "3001:3001"
+    environment:
+      # Application settings
+      - NODE_ENV=production
+      - PORT=3001
+      
+      # Security settings
+      - SECURITY_LOGGING=true
+      - REQUIRE_HTTPS=false  # Set to true in production with SSL
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080,http://localhost:3001
+      - PHI_MODE=safe
+      - ENABLE_AUDIT=true
+      
+      # FHIR server configuration
+      - FHIR_BASE_URL=https://hapi.fhir.org/baseR4
+      - TERMINOLOGY_BASE_URL=https://tx.fhir.org/r4
+      
+      # Rate limiting configuration (optional overrides)
+      - RATE_LIMIT_WINDOW_MS=900000  # 15 minutes
+      - RATE_LIMIT_MAX_REQUESTS=100
+      - FHIR_RATE_LIMIT_MAX=50
+      - WRITE_RATE_LIMIT_MAX=10
+      
+    volumes:
+      # Mount logs directory if needed
+      - ./logs:/usr/src/app/logs:rw
+      
+    restart: unless-stopped
+    
+    # Security settings
+    security_opt:
+      - no-new-privileges:true
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "node", "-e", "const http = require('http'); const options = { hostname: 'localhost', port: 3001, path: '/health', timeout: 5000 }; const req = http.request(options, (res) => { process.exit(res.statusCode === 200 ? 0 : 1); }); req.on('error', () => process.exit(1)); req.on('timeout', () => { req.destroy(); process.exit(1); }); req.setTimeout(5000); req.end();"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    # Network settings
+    networks:
+      - fhir-mcp-network
+
+  # Optional: Redis for distributed rate limiting (if needed in the future)
+  redis:
+    image: redis:7-alpine
+    profiles:
+      - with-redis
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-fhir-mcp-redis-pass}"]
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-fhir-mcp-redis-pass}
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+    networks:
+      - fhir-mcp-network
+    security_opt:
+      - no-new-privileges:true
+
+  # Optional: Nginx reverse proxy with SSL termination
+  nginx:
+    image: nginx:alpine
+    profiles:
+      - with-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro  # Mount SSL certificates
+    depends_on:
+      - fhir-mcp-bridge
+    restart: unless-stopped
+    networks:
+      - fhir-mcp-network
+
+networks:
+  fhir-mcp-network:
+    driver: bridge
+
+volumes:
+  redis-data:
+    driver: local

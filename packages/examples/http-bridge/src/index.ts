@@ -3,13 +3,72 @@ import cors from 'cors';
 import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import Joi from 'joi';
+
+// Security middleware imports
+import {
+  validationSchemas,
+  validateRequest,
+  validateToolParameters,
+  validateContentType,
+  validateRequestSize
+} from './security/validation.js';
+import {
+  generalRateLimit,
+  fhirRateLimit,
+  writeRateLimit,
+  progressiveDelay,
+  checkBlocked,
+  recordFailedAttempt,
+  handleSuspiciousErrors
+} from './security/rate-limiting.js';
+import {
+  securityHeaders,
+  sensitiveEndpointSecurity,
+  validateRequestPatterns,
+  securityMonitoring,
+  securityErrorHandler
+} from './security/headers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+
+// Trust proxy for proper IP detection behind load balancer
+app.set('trust proxy', 1);
+
+// Security middleware stack - ORDER IS IMPORTANT
+app.use(...securityHeaders);
+app.use(validateRequestPatterns);
+app.use(securityMonitoring);
+app.use(checkBlocked);
+app.use(recordFailedAttempt);
+app.use(validateContentType);
+app.use(validateRequestSize(1024 * 1024)); // 1MB limit
+// Rate limiting after basic validation
+app.use(progressiveDelay);
+app.use(generalRateLimit);
+
+// CORS with stricter configuration
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000', 'http://localhost:8080'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'X-Request-ID'],
+  exposedHeaders: ['X-Request-ID', 'X-Rate-Limit-Remaining']
+}));
+
+// Body parsing with size limits
+app.use(express.json({ 
+  limit: '1mb',
+  strict: true,
+  verify: (req: any, res: any, buf: Buffer) => {
+    // Store raw body for signature verification if needed
+    req.rawBody = buf;
+  }
+}));
+app.use(express.urlencoded({ extended: false, limit: '100kb' }));
 
 interface McpRequest {
   jsonrpc: string;
@@ -124,92 +183,220 @@ app.get('/tools', async (req: Request, res: Response) => {
 });
 
 // FHIR Capabilities
-app.post('/fhir/capabilities', async (req: Request, res: Response) => {
-  try {
-    const result = await bridge.sendRequest('tools/call', {
-      name: 'fhir.capabilities',
-      arguments: req.body
-    });
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: (error as Error).message });
+app.post('/fhir/capabilities', 
+  fhirRateLimit,
+  sensitiveEndpointSecurity,
+  validateRequest(Joi.object({
+    _summary: Joi.string().valid('true', 'false', 'text', 'data').optional(),
+    _format: Joi.string().valid('json', 'xml', 'application/fhir+json', 'application/fhir+xml').optional()
+  }).unknown(false)),
+  async (req: Request, res: Response) => {
+    try {
+      const result = await bridge.sendRequest('tools/call', {
+        name: 'fhir.capabilities',
+        arguments: req.body
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ 
+        error: 'FHIR capabilities request failed',
+        message: process.env.NODE_ENV === 'production' ? 'Internal server error' : (error as Error).message,
+        requestId: req.get('X-Request-ID'),
+        timestamp: new Date().toISOString()
+      });
+    }
   }
-});
+);
 
 // FHIR Search
-app.post('/fhir/search', async (req: Request, res: Response) => {
-  try {
-    const result = await bridge.sendRequest('tools/call', {
-      name: 'fhir.search',
-      arguments: req.body
-    });
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: (error as Error).message });
+app.post('/fhir/search', 
+  fhirRateLimit,
+  sensitiveEndpointSecurity,
+  validateRequest(validationSchemas.fhirSearch),
+  async (req: Request, res: Response) => {
+    try {
+      const result = await bridge.sendRequest('tools/call', {
+        name: 'fhir.search',
+        arguments: req.body
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ 
+        error: 'FHIR search request failed',
+        message: process.env.NODE_ENV === 'production' ? 'Internal server error' : (error as Error).message,
+        requestId: req.get('X-Request-ID'),
+        timestamp: new Date().toISOString()
+      });
+    }
   }
-});
+);
 
 // FHIR Read
-app.post('/fhir/read', async (req: Request, res: Response) => {
-  try {
-    const result = await bridge.sendRequest('tools/call', {
-      name: 'fhir.read',
-      arguments: req.body
-    });
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: (error as Error).message });
+app.post('/fhir/read', 
+  fhirRateLimit,
+  sensitiveEndpointSecurity,
+  validateRequest(validationSchemas.fhirRead),
+  async (req: Request, res: Response) => {
+    try {
+      const result = await bridge.sendRequest('tools/call', {
+        name: 'fhir.read',
+        arguments: req.body
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ 
+        error: 'FHIR read request failed',
+        message: process.env.NODE_ENV === 'production' ? 'Internal server error' : (error as Error).message,
+        requestId: req.get('X-Request-ID'),
+        timestamp: new Date().toISOString()
+      });
+    }
   }
-});
+);
 
 // Terminology Lookup
-app.post('/terminology/lookup', async (req: Request, res: Response) => {
-  try {
-    const result = await bridge.sendRequest('tools/call', {
-      name: 'terminology.lookup',
-      arguments: req.body
-    });
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: (error as Error).message });
+app.post('/terminology/lookup', 
+  fhirRateLimit,
+  validateRequest(validationSchemas.terminologyLookup),
+  async (req: Request, res: Response) => {
+    try {
+      const result = await bridge.sendRequest('tools/call', {
+        name: 'terminology.lookup',
+        arguments: req.body
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ 
+        error: 'Terminology lookup request failed',
+        message: process.env.NODE_ENV === 'production' ? 'Internal server error' : (error as Error).message,
+        requestId: req.get('X-Request-ID'),
+        timestamp: new Date().toISOString()
+      });
+    }
   }
-});
+);
 
 // Terminology Expand
-app.post('/terminology/expand', async (req: Request, res: Response) => {
-  try {
-    const result = await bridge.sendRequest('tools/call', {
-      name: 'terminology.expand',
-      arguments: req.body
-    });
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: (error as Error).message });
+app.post('/terminology/expand', 
+  fhirRateLimit,
+  validateRequest(validationSchemas.terminologyExpand),
+  async (req: Request, res: Response) => {
+    try {
+      const result = await bridge.sendRequest('tools/call', {
+        name: 'terminology.expand',
+        arguments: req.body
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ 
+        error: 'Terminology expand request failed',
+        message: process.env.NODE_ENV === 'production' ? 'Internal server error' : (error as Error).message,
+        requestId: req.get('X-Request-ID'),
+        timestamp: new Date().toISOString()
+      });
+    }
   }
-});
+);
+
+// FHIR Create (Write operation)
+app.post('/fhir/create', 
+  writeRateLimit,
+  sensitiveEndpointSecurity,
+  validateRequest(validationSchemas.fhirResource),
+  async (req: Request, res: Response) => {
+    try {
+      const result = await bridge.sendRequest('tools/call', {
+        name: 'fhir.create',
+        arguments: req.body
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ 
+        error: 'FHIR create request failed',
+        message: process.env.NODE_ENV === 'production' ? 'Internal server error' : (error as Error).message,
+        requestId: req.get('X-Request-ID'),
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+);
+
+// FHIR Update (Write operation)
+app.post('/fhir/update', 
+  writeRateLimit,
+  sensitiveEndpointSecurity,
+  validateRequest(validationSchemas.fhirResource),
+  async (req: Request, res: Response) => {
+    try {
+      const result = await bridge.sendRequest('tools/call', {
+        name: 'fhir.update',
+        arguments: req.body
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ 
+        error: 'FHIR update request failed',
+        message: process.env.NODE_ENV === 'production' ? 'Internal server error' : (error as Error).message,
+        requestId: req.get('X-Request-ID'),
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+);
 
 // Generic tool call endpoint
-app.post('/tools/:toolName', async (req: Request, res: Response) => {
-  try {
-    const toolName = req.params.toolName;
-    const result = await bridge.sendRequest('tools/call', {
-      name: toolName,
-      arguments: req.body
-    });
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: (error as Error).message });
+app.post('/tools/:toolName', 
+  fhirRateLimit,
+  validateToolParameters,
+  async (req: Request, res: Response) => {
+    try {
+      const toolName = req.params.toolName;
+      const result = await bridge.sendRequest('tools/call', {
+        name: toolName,
+        arguments: req.body
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ 
+        error: `Tool ${req.params.toolName} request failed`,
+        message: process.env.NODE_ENV === 'production' ? 'Internal server error' : (error as Error).message,
+        requestId: req.get('X-Request-ID'),
+        timestamp: new Date().toISOString()
+      });
+    }
   }
-});
+);
 
 const PORT = process.env.PORT || 3001;
 
+// Error handling middleware - MUST BE LAST
+app.use(handleSuspiciousErrors);
+app.use(securityErrorHandler);
+
+// 404 handler
+app.use('*', (req: Request, res: Response) => {
+  res.status(404).json({
+    error: 'Not Found',
+    message: 'The requested endpoint does not exist',
+    path: req.originalUrl,
+    requestId: req.get('X-Request-ID'),
+    timestamp: new Date().toISOString()
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`🌐 FHIR-MCP HTTP Bridge running on port ${PORT}`);
+  console.log(`🔒 Security hardening: Phase 1 implemented`);
   console.log(`📊 Health check: http://localhost:${PORT}/health`);
   console.log(`🔧 Tools list: http://localhost:${PORT}/tools`);
   console.log(`🏥 FHIR endpoints: http://localhost:${PORT}/fhir/*`);
   console.log(`📚 Terminology endpoints: http://localhost:${PORT}/terminology/*`);
+  
+  if (process.env.NODE_ENV === 'production') {
+    console.log(`⚠️  Production mode: Enhanced security active`);
+    console.log(`🛡️  Rate limiting: Active`);
+    console.log(`🔐 HTTPS required: ${process.env.REQUIRE_HTTPS !== 'false'}`);
+  }
 });
 
 export { HttpMcpBridge };

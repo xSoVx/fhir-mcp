@@ -17,7 +17,13 @@
       "Bash(chmod:*)",
       "Bash(git commit:*)",
       "Bash(npm test)",
-      "Bash(npm ls:*)"
+      "Bash(npm ls:*)",
+      "Bash(docker build:*)",
+      "Bash(npm start)",
+      "Bash(curl:*)",
+      "Bash(for i in {1..10})",
+      "Bash(echo:*)",
+      "Bash(done)"
     ],
     "deny": [],
     "ask": []
