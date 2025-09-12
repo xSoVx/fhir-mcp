@@ -73,7 +73,7 @@ export class AuditLogger {
 
   private redactSensitiveData(data: Record<string, any>): Record<string, any> {
     const redacted = { ...data };
-    const sensitiveFields = ['token', 'authorization', 'password', 'secret', 'ssn', 'birthDate'];
+    const sensitiveFields = ['token', 'authorization', 'password', 'secret', 'ssn', 'birthdate'];
     
     Object.keys(redacted).forEach(key => {
       const lowerKey = key.toLowerCase();
