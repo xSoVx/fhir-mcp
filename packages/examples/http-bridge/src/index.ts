@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import { spawn } from 'child_process';
 import path from 'path';
@@ -110,7 +110,7 @@ app.get('/health', (req, res) => {
 });
 
 // List available tools
-app.get('/tools', async (req, res) => {
+app.get('/tools', async (req: Request, res: Response) => {
   try {
     const result = await bridge.sendRequest('tools/list');
     res.json(result);
@@ -120,7 +120,7 @@ app.get('/tools', async (req, res) => {
 });
 
 // FHIR Capabilities
-app.post('/fhir/capabilities', async (req, res) => {
+app.post('/fhir/capabilities', async (req: Request, res: Response) => {
   try {
     const result = await bridge.sendRequest('tools/call', {
       name: 'fhir.capabilities',
@@ -133,7 +133,7 @@ app.post('/fhir/capabilities', async (req, res) => {
 });
 
 // FHIR Search
-app.post('/fhir/search', async (req, res) => {
+app.post('/fhir/search', async (req: Request, res: Response) => {
   try {
     const result = await bridge.sendRequest('tools/call', {
       name: 'fhir.search',
@@ -146,7 +146,7 @@ app.post('/fhir/search', async (req, res) => {
 });
 
 // FHIR Read
-app.post('/fhir/read', async (req, res) => {
+app.post('/fhir/read', async (req: Request, res: Response) => {
   try {
     const result = await bridge.sendRequest('tools/call', {
       name: 'fhir.read',
@@ -159,7 +159,7 @@ app.post('/fhir/read', async (req, res) => {
 });
 
 // Terminology Lookup
-app.post('/terminology/lookup', async (req, res) => {
+app.post('/terminology/lookup', async (req: Request, res: Response) => {
   try {
     const result = await bridge.sendRequest('tools/call', {
       name: 'terminology.lookup',
@@ -172,7 +172,7 @@ app.post('/terminology/lookup', async (req, res) => {
 });
 
 // Terminology Expand
-app.post('/terminology/expand', async (req, res) => {
+app.post('/terminology/expand', async (req: Request, res: Response) => {
   try {
     const result = await bridge.sendRequest('tools/call', {
       name: 'terminology.expand',
@@ -185,7 +185,7 @@ app.post('/terminology/expand', async (req, res) => {
 });
 
 // Generic tool call endpoint
-app.post('/tools/:toolName', async (req, res) => {
+app.post('/tools/:toolName', async (req: Request, res: Response) => {
   try {
     const toolName = req.params.toolName;
     const result = await bridge.sendRequest('tools/call', {
