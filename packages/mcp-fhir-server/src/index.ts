@@ -134,7 +134,7 @@ class FhirMcpServer {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     
-    console.error('FhirMCP server started');
+    console.error('FHIR-MCP server started');
     console.error(`FHIR Base URL: ${this.config.fhir.baseUrl}`);
     console.error(`Terminology Base URL: ${this.config.terminology.baseUrl}`);
     console.error(`PHI Mode: ${this.config.security.phiMode}`);

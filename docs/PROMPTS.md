@@ -1,6 +1,6 @@
-# FhirMCP Prompt Library
+# FHIR-MCP Prompt Library
 
-This guide provides ready-to-use prompts and patterns for working with FhirMCP tools effectively.
+This guide provides ready-to-use prompts and patterns for working with FHIR-MCP tools effectively.
 
 ## System Prompt
 

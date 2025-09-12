@@ -1,6 +1,6 @@
-# FhirMCP Quick Start Guide
+# FHIR-MCP Quick Start Guide
 
-FhirMCP is an MCP (Model Context Protocol) server that enables LLMs to securely access FHIR servers and HL7 terminology services with built-in PHI protection and audit logging.
+FHIR-MCP is an MCP (Model Context Protocol) server that enables LLMs to securely access FHIR servers and HL7 terminology services with built-in PHI protection and audit logging.
 
 ## Prerequisites
 

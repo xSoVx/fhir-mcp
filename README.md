@@ -1,10 +1,10 @@
-# FhirMCP - FHIR Model Context Protocol Server
+# FHIR-MCP - FHIR Model Context Protocol Server
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-FhirMCP is an open-source MCP (Model Context Protocol) server that enables LLMs to securely interact with FHIR servers and HL7 terminology services. It provides a comprehensive toolset for healthcare interoperability with built-in PHI protection, audit logging, and token-efficient operations.
+FHIR-MCP is an open-source MCP (Model Context Protocol) server that enables LLMs to securely interact with FHIR servers and HL7 terminology services. It provides a comprehensive toolset for healthcare interoperability with built-in PHI protection, audit logging, and token-efficient operations.
 
 ## ✨ Features
 
@@ -156,14 +156,14 @@ Configure via environment variables:
 
 ## 🤖 Using with Claude
 
-Add to your Claude MCP configuration:
+Add FHIR-MCP to your Claude MCP configuration:
 
 ```json
 {
   "mcpServers": {
     "fhir": {
       "command": "node",
-      "args": ["path/to/fhir-mcp/packages/mcp-fhir-server/dist/index.js"],
+      "args": ["path/to/FHIR-MCP/packages/mcp-fhir-server/dist/index.js"],
       "env": {
         "FHIR_BASE_URL": "https://your-fhir-server.com/fhir",
         "PHI_MODE": "safe"
@@ -223,4 +223,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Built with ❤️ for healthcare interoperability**
+**FHIR-MCP: Built with ❤️ for healthcare interoperability**

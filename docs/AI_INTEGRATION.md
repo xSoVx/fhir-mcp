@@ -1,6 +1,6 @@
-# AI Assistant Integration with FhirMCP
+# AI Assistant Integration with FHIR-MCP
 
-This guide explains how to connect various AI assistants and tools to your FhirMCP server for healthcare data analysis and clinical decision support.
+This guide explains how to connect various AI assistants and tools to your FHIR-MCP server for healthcare data analysis and clinical decision support.
 
 ## 🤖 GitHub Copilot Integration
 

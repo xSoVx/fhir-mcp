@@ -205,7 +205,7 @@ app.post('/tools/:toolName', async (req: Request, res: Response) => {
 const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
-  console.log(`🌐 FhirMCP HTTP Bridge running on port ${PORT}`);
+  console.log(`🌐 FHIR-MCP HTTP Bridge running on port ${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/health`);
   console.log(`🔧 Tools list: http://localhost:${PORT}/tools`);
   console.log(`🏥 FHIR endpoints: http://localhost:${PORT}/fhir/*`);

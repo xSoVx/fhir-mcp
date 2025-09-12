@@ -1,4 +1,4 @@
-# FhirMCP Server - Comprehensive QA Test Report
+# FHIR-MCP Server - Comprehensive QA Test Report
 
 ## Executive Summary
 
@@ -197,7 +197,7 @@
 
 **Overall Grade: A+ (Excellent)**
 
-The FhirMCP server demonstrates excellent software engineering practices with comprehensive security features, robust error handling, and clean architecture. All core functions pass rigorous testing, and the single identified bug has been resolved.
+The FHIR-MCP server demonstrates excellent software engineering practices with comprehensive security features, robust error handling, and clean architecture. All core functions pass rigorous testing, and the single identified bug has been resolved.
 
 **Readiness Assessment:** ✅ PRODUCTION READY
 

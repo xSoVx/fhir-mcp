@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Manual QA Test Suite for FhirMCP Server
+ * Manual QA Test Suite for FHIR-MCP Server
  * Tests all functions and identifies potential issues
  */
 
@@ -15,8 +15,8 @@ class ManualQATester {
   }
 
   async runFullQATest() {
-    console.log('🔍 COMPREHENSIVE QA TEST SUITE FOR FHIR MCP SERVER');
-    console.log('================================================\n');
+    console.log('🔍 COMPREHENSIVE QA TEST SUITE FOR FHIR-MCP SERVER');
+    console.log('=================================================\n');
     
     // Static Analysis
     await this.performStaticAnalysis();

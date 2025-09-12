@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * E2E Test Script for FhirMCP Server
+ * E2E Test Script for FHIR-MCP Server
  * Tests against HAPI FHIR server and public terminology service
  */
 
@@ -15,7 +15,7 @@ class FhirMcpTester {
   }
 
   async runTest() {
-    console.log('🚀 Starting FhirMCP E2E Tests\n');
+    console.log('🚀 Starting FHIR-MCP E2E Tests\n');
     
     try {
       await this.startServer();
@@ -48,7 +48,7 @@ class FhirMcpTester {
       });
     });
 
-    console.log('🌟 Starting FhirMCP server...');
+    console.log('🌟 Starting FHIR-MCP server...');
     this.serverProcess = spawn('node', ['dist/index.js'], {
       cwd: path.join(__dirname, '../../packages/mcp-fhir-server'),
       stdio: ['pipe', 'pipe', 'inherit'],

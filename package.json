@@ -1,7 +1,7 @@
 {
   "name": "fhir-mcp",
   "version": "0.1.0",
-  "description": "MCP server for FHIR and HL7 terminology services",
+  "description": "FHIR-MCP server for FHIR and HL7 terminology services",
   "private": true,
   "workspaces": [
     "packages/*",
@@ -26,7 +26,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/fhir-mcp.git"
+    "url": "https://github.com/yourusername/FHIR-MCP.git"
   },
   "keywords": [
     "fhir",
