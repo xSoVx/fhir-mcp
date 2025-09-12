@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Use Node.js 20
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Build project
+      run: npm run build
+      
+    - name: Run tests
+      run: node test-basic-functionality.js
+      
+    - name: Extract version from tag
+      id: version
+      run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Extract changelog for this version
+        VERSION=${{ steps.version.outputs.version }}
+        CHANGELOG=$(sed -n "/## \[$VERSION\]/,/## \[/p" CHANGELOG.md | head -n -1 | tail -n +2)
+        echo "changelog<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGELOG" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        
+    - name: Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release v${{ steps.version.outputs.version }}
+        body: |
+          ## FhirMCP v${{ steps.version.outputs.version }}
+          
+          ${{ steps.changelog.outputs.changelog }}
+          
+          ### Installation
+          ```bash
+          git clone https://github.com/${{ github.repository }}.git
+          cd fhir-mcp
+          npm install
+          npm run build
+          ```
+          
+          ### Quick Start
+          ```bash
+          cd packages/mcp-fhir-server
+          npm start
+          ```
+          
+          See [QUICKSTART.md](https://github.com/${{ github.repository }}/blob/v${{ steps.version.outputs.version }}/docs/QUICKSTART.md) for detailed setup instructions.
+          
+        draft: false
+        prerelease: false
+        
+    - name: Archive build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: fhir-mcp-v${{ steps.version.outputs.version }}
+        path: |
+          packages/mcp-fhir-server/dist/
+          packages/mcp-fhir-server/package.json
+          docs/
+          README.md
+          LICENSE

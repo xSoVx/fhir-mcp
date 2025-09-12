@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x, 22.x]
+        
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Run type checking
+      run: npm run typecheck
+      
+    - name: Build project
+      run: npm run build
+      
+    - name: Run linter
+      run: npm run lint
+      
+    - name: Run basic functionality tests
+      run: node test-basic-functionality.js
+      
+    - name: Check package versions
+      run: |
+        echo "Root package version: $(node -p "require('./package.json').version")"
+        echo "MCP server version: $(node -p "require('./packages/mcp-fhir-server/package.json').version")"
