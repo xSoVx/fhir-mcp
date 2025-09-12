@@ -16,7 +16,8 @@
       "Bash(gh:*)",
       "Bash(chmod:*)",
       "Bash(git commit:*)",
-      "Bash(npm test)"
+      "Bash(npm test)",
+      "Bash(npm ls:*)"
     ],
     "deny": [],
     "ask": []

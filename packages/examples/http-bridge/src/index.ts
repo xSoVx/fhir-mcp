@@ -105,7 +105,7 @@ class HttpMcpBridge {
 const bridge = new HttpMcpBridge();
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 

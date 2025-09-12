@@ -4,7 +4,8 @@
   "description": "MCP server for FHIR and HL7 terminology services",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "packages/examples/*"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
