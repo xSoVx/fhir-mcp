@@ -10,7 +10,12 @@
       "Bash(npm run typecheck:*)",
       "Bash(node:*)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git config:*)",
+      "Bash(git tag:*)",
+      "Bash(gh:*)",
+      "Bash(chmod:*)",
+      "Bash(git commit:*)"
     ],
     "deny": [],
     "ask": []
