@@ -139,7 +139,7 @@ export const writeRateLimit = rateLimit({
 export const progressiveDelay = slowDown({
   windowMs: 5 * 60 * 1000, // 5 minutes
   delayAfter: 10, // Allow 10 requests per window without delay
-  delayMs: (used, _req) => {
+  delayMs: (used) => {
     const delayAfter = 10; // Use fixed value since slowDown interface varies
     return (used - delayAfter) * 500; // Add 500ms delay for each request after the limit
   },
