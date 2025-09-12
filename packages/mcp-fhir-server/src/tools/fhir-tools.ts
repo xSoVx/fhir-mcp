@@ -5,11 +5,7 @@ import { AuditLogger } from '../security/audit-logger.js';
 import { SecurityMiddleware, SecurityContext } from '../security/security-middleware.js';
 import { PHILevel, RESOURCE_PHI_MATRIX } from '../types/phi-types.js';
 import { 
-  FhirCapabilitiesSchema, 
-  FhirSearchSchema, 
-  FhirReadSchema, 
-  FhirCreateSchema, 
-  FhirUpdateSchema 
+  FhirCapabilitiesSchema
 } from './schemas.js';
 
 export class FhirTools {

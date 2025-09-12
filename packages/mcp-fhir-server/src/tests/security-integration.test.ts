@@ -152,7 +152,7 @@ describe('Security Integration Tests', () => {
     });
 
     test('should detect suspicious rapid-fire requests', () => {
-      const rapidRequests = Array.from({ length: 10 }, (_, i) => ({
+      const rapidRequests = Array.from({ length: 10 }, () => ({
         userId: 'rapid-user',
         sessionId: 'rapid-session',
         operation: 'fhir.search',

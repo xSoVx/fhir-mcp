@@ -6,8 +6,7 @@ import {
   PHIProtectionConfig,
   PHIProtectionError,
   EmergencyAccessGrant,
-  AuditMetadata,
-  RESOURCE_PHI_MATRIX
+  AuditMetadata
 } from '../types/phi-types.js';
 import { PHIClassifier } from './phi-classifier.js';
 import { PHIMaskingEngine } from './phi-masking-engine.js';
