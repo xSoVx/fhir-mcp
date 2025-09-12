@@ -28,7 +28,18 @@
       "Bash(npx jest:*)",
       "Bash(docker-compose up:*)",
       "Bash(docker-compose:*)",
-      "Bash(docker exec:*)"
+      "Bash(docker exec:*)",
+      "Bash(FHIR_BASE_URL=https://hapi.fhir.org/baseR4 TERMINOLOGY_BASE_URL=https://tx.fhir.org/r4 PHI_MODE=safe ENABLE_AUDIT=true timeout 10s node dist/index.js)",
+      "Bash(FHIR_BASE_URL=https://hapi.fhir.org/baseR4 TERMINOLOGY_BASE_URL=https://tx.fhir.org/r4 PHI_MODE=safe ENABLE_AUDIT=true node dist/index.js)",
+      "Bash(export FHIR_BASE_URL=https://hapi.fhir.org/baseR4)",
+      "Bash(export TERMINOLOGY_BASE_URL=https://tx.fhir.org/r4)",
+      "Bash(export PHI_MODE=safe)",
+      "Bash(export ENABLE_AUDIT=true)",
+      "Bash(PORT=3002 FHIR_BASE_URL=https://hapi.fhir.org/baseR4 TERMINOLOGY_BASE_URL=https://tx.fhir.org/r4 PHI_MODE=safe ENABLE_AUDIT=true timeout 10s node dist/index.js)",
+      "Bash(PORT=8080 FHIR_BASE_URL=https://hapi.fhir.org/baseR4 TERMINOLOGY_BASE_URL=https://tx.fhir.org/r4 PHI_MODE=safe ENABLE_AUDIT=true timeout 10s node dist/index.js)",
+      "Bash(PORT=8765 FHIR_BASE_URL=https://hapi.fhir.org/baseR4 TERMINOLOGY_BASE_URL=https://tx.fhir.org/r4 PHI_MODE=safe ENABLE_AUDIT=true timeout 10s node dist/index.js)",
+      "Bash(PORT=8765 FHIR_BASE_URL=https://hapi.fhir.org/baseR4 TERMINOLOGY_BASE_URL=https://tx.fhir.org/r4 PHI_MODE=safe ENABLE_AUDIT=true node dist/index.js)",
+      "Bash(PORT=8765 FHIR_BASE_URL=https://hapi.fhir.org/baseR4 TERMINOLOGY_BASE_URL=https://tx.fhir.org/r4 PHI_MODE=safe ENABLE_AUDIT=true timeout 15s node dist/index.js)"
     ],
     "deny": [],
     "ask": []

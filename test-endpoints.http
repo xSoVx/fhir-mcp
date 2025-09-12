@@ -1,0 +1,94 @@
+# FHIR-MCP HTTP Bridge Test Endpoints
+# Change port to 3001 for local development or 3002 for Docker
+
+@baseUrl = http://localhost:3001
+# @baseUrl = http://localhost:3002  # Uncomment for Docker
+# @baseUrl = http://localhost:8765  # Current test server
+
+### Health Check - Verify server status
+GET {{baseUrl}}/health
+
+### Get Available Tools - List all FHIR and terminology tools
+GET {{baseUrl}}/tools
+
+### FHIR Capabilities - Get server capability statement
+POST {{baseUrl}}/fhir/capabilities
+Content-Type: application/json
+
+{
+  "_summary": "true"
+}
+
+### FHIR Search - Find Patients by name
+POST {{baseUrl}}/fhir/search
+Content-Type: application/json
+
+{
+  "resourceType": "Patient",
+  "params": {
+    "name": "Smith"
+  },
+  "count": 5,
+  "elements": ["id", "name", "gender", "birthDate"]
+}
+
+### FHIR Read - Get specific patient by ID
+POST {{baseUrl}}/fhir/read
+Content-Type: application/json
+
+{
+  "resourceType": "Patient",
+  "id": "example",
+  "elements": ["id", "name", "gender"]
+}
+
+### FHIR Search - Find recent lab observations
+POST {{baseUrl}}/fhir/search
+Content-Type: application/json
+
+{
+  "resourceType": "Observation",
+  "params": {
+    "category": "laboratory",
+    "date": "ge2024-01-01"
+  },
+  "sort": "-date",
+  "count": 10,
+  "elements": ["id", "code", "effectiveDateTime", "valueQuantity"]
+}
+
+### Terminology Lookup - Look up a LOINC code
+POST {{baseUrl}}/terminology/lookup
+Content-Type: application/json
+
+{
+  "system": "http://loinc.org",
+  "code": "29463-7"
+}
+
+### Terminology Expand - Expand administrative gender ValueSet
+POST {{baseUrl}}/terminology/expand
+Content-Type: application/json
+
+{
+  "url": "http://hl7.org/fhir/ValueSet/administrative-gender",
+  "count": 10
+}
+
+### Terminology Translate - Translate between code systems
+POST {{baseUrl}}/terminology/translate
+Content-Type: application/json
+
+{
+  "code": "M",
+  "system": "http://hl7.org/fhir/administrative-gender",
+  "targetSystem": "http://terminology.hl7.org/CodeSystem/v3-AdministrativeGender"
+}
+
+### Generic Tool Interface - Call any tool by name
+POST {{baseUrl}}/tools/fhir.capabilities
+Content-Type: application/json
+
+{
+  "_summary": "true"
+}

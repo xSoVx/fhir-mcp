@@ -1,0 +1,42 @@
+# Codex CLI MCP servers config
+# Multiple options for running FHIR-MCP:
+
+# Option 1: Direct Node.js execution (fastest for development)
+[mcp_servers.fhir_mcp_local]
+transport = "stdio"
+command = "node"
+args = ["packages/mcp-fhir-server/dist/index.js"]
+env = { 
+  FHIR_BASE_URL = "https://hapi.fhir.org/baseR4", 
+  TERMINOLOGY_BASE_URL = "https://tx.fhir.org/r4", 
+  PHI_MODE = "safe", 
+  ENABLE_AUDIT = "true" 
+}
+
+# Option 2: Docker execution (recommended for production)
+# Prerequisite: build the image once with: docker build -t fhir-mcp:latest .
+[mcp_servers.fhir_mcp]
+transport = "stdio"
+command = "docker"
+args = [
+  "run", "--rm", "-i",
+  "-e", "FHIR_BASE_URL",
+  "-e", "TERMINOLOGY_BASE_URL",
+  "-e", "PHI_MODE",
+  "-e", "ENABLE_AUDIT",
+  "fhir-mcp:latest",
+  "node", "/usr/src/app/packages/mcp-fhir-server/dist/index.js"
+]
+
+# Default env values passed to docker (can be overridden by your IDE)
+env = { 
+  FHIR_BASE_URL = "https://hapi.fhir.org/baseR4", 
+  TERMINOLOGY_BASE_URL = "https://tx.fhir.org/r4", 
+  PHI_MODE = "safe", 
+  ENABLE_AUDIT = "true" 
+}
+
+# Option 3: HTTP Bridge (for web applications that can't use MCP directly)
+# Start separately: cd packages/examples/http-bridge && npm start
+# Then use: http://localhost:3001 as remote MCP endpoint
+

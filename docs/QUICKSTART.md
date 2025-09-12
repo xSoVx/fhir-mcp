@@ -45,13 +45,21 @@ export ENABLE_AUDIT="true"
 
 ## Running the Server
 
-Start the MCP server:
+### Option 1: MCP Server (for Claude Desktop)
 ```bash
 cd packages/mcp-fhir-server
-npm start
+npm run build
+FHIR_BASE_URL="https://hapi.fhir.org/baseR4" TERMINOLOGY_BASE_URL="https://tx.fhir.org/r4" PHI_MODE="safe" ENABLE_AUDIT="true" npm start
 ```
 
-The server will start in stdio mode and is ready to accept MCP requests.
+### Option 2: HTTP Bridge (for web applications)
+```bash
+cd packages/examples/http-bridge
+npm run build
+PORT=3001 FHIR_BASE_URL="https://hapi.fhir.org/baseR4" TERMINOLOGY_BASE_URL="https://tx.fhir.org/r4" PHI_MODE="safe" ENABLE_AUDIT="true" npm start
+```
+
+The MCP server starts in stdio mode for direct Claude integration, while the HTTP bridge provides REST endpoints at `http://localhost:3001`.
 
 ## Available Tools
 
@@ -142,16 +150,31 @@ All operations are logged with:
 
 ## Testing
 
-Run the E2E test suite:
+### Build and Test the MCP Server
 ```bash
+# Build all packages
+npm run build
+
+# Run comprehensive QA test suite
+node manual-qa-test.js
+
+# Run E2E integration tests
 node tests/e2e/test-fhir-mcp.js
+
+# Test the HTTP Bridge
+cd packages/examples/http-bridge
+npm run build
+# Start server in background, then test endpoints
+curl -s http://localhost:3001/health
+curl -s http://localhost:3001/tools
 ```
 
-This tests against public HAPI FHIR and HL7 terminology servers.
+This tests against public HAPI FHIR and HL7 terminology servers with full security validation.
 
 ## Using with Claude
 
-Add to your Claude configuration:
+### Direct MCP Integration (Claude Desktop)
+Add to your Claude MCP configuration:
 ```json
 {
   "mcpServers": {
@@ -160,11 +183,25 @@ Add to your Claude configuration:
       "args": ["path/to/fhir-mcp/packages/mcp-fhir-server/dist/index.js"],
       "env": {
         "FHIR_BASE_URL": "https://your-fhir-server.com/fhir",
-        "PHI_MODE": "safe"
+        "TERMINOLOGY_BASE_URL": "https://tx.fhir.org/r4",
+        "PHI_MODE": "safe",
+        "ENABLE_AUDIT": "true"
       }
     }
   }
 }
+```
+
+### HTTP Bridge Integration (Web Applications)
+For web-based AI assistants, connect to the HTTP bridge:
+```javascript
+// Example: Test FHIR capabilities endpoint
+const response = await fetch('http://localhost:3001/fhir/capabilities', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ "_summary": "true" })
+});
+const capabilities = await response.json();
 ```
 
 ## Token Efficiency Tips

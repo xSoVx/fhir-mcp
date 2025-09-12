@@ -178,7 +178,9 @@ Add FHIR-MCP to your Claude MCP configuration:
       "args": ["path/to/FHIR-MCP/packages/mcp-fhir-server/dist/index.js"],
       "env": {
         "FHIR_BASE_URL": "https://your-fhir-server.com/fhir",
-        "PHI_MODE": "safe"
+        "TERMINOLOGY_BASE_URL": "https://tx.fhir.org/r4",
+        "PHI_MODE": "safe",
+        "ENABLE_AUDIT": "true"
       }
     }
   }
@@ -191,9 +193,12 @@ For browser-based AI assistants that can't use MCP directly:
 
 ### Local Development
 ```bash
-# Start the HTTP bridge server
+# Build the HTTP bridge first
 cd packages/examples/http-bridge
-npm start
+npm run build
+
+# Start the HTTP bridge server
+PORT=3001 FHIR_BASE_URL="https://hapi.fhir.org/baseR4" TERMINOLOGY_BASE_URL="https://tx.fhir.org/r4" PHI_MODE="safe" ENABLE_AUDIT="true" npm start
 ```
 
 ### Docker Deployment (Recommended)
@@ -203,10 +208,10 @@ docker-compose up --build
 
 # Or run individual commands
 docker build -t fhir-mcp .
-docker run -p 3002:3001 -e FHIR_BASE_URL="https://hapi.fhir.org/baseR4" fhir-mcp
+docker run -p 3002:3001 -e FHIR_BASE_URL="https://hapi.fhir.org/baseR4" -e TERMINOLOGY_BASE_URL="https://tx.fhir.org/r4" -e PHI_MODE="safe" -e ENABLE_AUDIT="true" fhir-mcp
 ```
 
-The bridge provides secure REST endpoints at `http://localhost:3002`:
+The bridge provides secure REST endpoints at `http://localhost:3002` (or localhost:3001 for local dev):
 - `GET /health` - Health check with security status
 - `GET /tools` - List available tools
 - `POST /fhir/capabilities` - FHIR server capabilities
@@ -216,6 +221,8 @@ The bridge provides secure REST endpoints at `http://localhost:3002`:
 - `POST /fhir/update` - Update FHIR resources (write operations)
 - `POST /terminology/lookup` - Terminology lookup
 - `POST /terminology/expand` - ValueSet expansion
+- `POST /terminology/translate` - Code translation
+- `POST /tools/{toolName}` - Generic tool interface
 
 ### Security Features Active
 - ✅ OWASP security headers
