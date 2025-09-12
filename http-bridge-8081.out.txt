@@ -1,0 +1,6 @@
+🌐 FHIR-MCP HTTP Bridge running on port 8081
+🔒 Security hardening: Phase 1 implemented
+📊 Health check: http://localhost:8081/health
+🔧 Tools list: http://localhost:8081/tools
+🏥 FHIR endpoints: http://localhost:8081/fhir/*
+📚 Terminology endpoints: http://localhost:8081/terminology/*

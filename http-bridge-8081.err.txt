@@ -1,0 +1,12 @@
+🔒 FHIR-MCP server started with enhanced security
+📍 FHIR Base URL: https://hapi.fhir.org/baseR4
+📚 Terminology Base URL: https://tx.fhir.org/r4
+🛡️ PHI Protection Mode: safe
+📋 Audit Logging: ENABLED
+🔐 Security Features:
+   • Input Validation: ENABLED
+   • Rate Limiting: ENABLED
+   • Security Headers: ENABLED
+   • Healthcare Compliance: ENABLED
+   • PHI Authorization: ENABLED
+   • Compliance Level: HEALTHCARE
