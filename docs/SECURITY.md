@@ -61,6 +61,13 @@ FHIR-MCP implements **Phase 1 Security Hardening** with enterprise-grade securit
 - **FHIR AuditEvent**: Standards-compliant audit event emission
 - **Real-time Monitoring**: Live security event tracking and alerting
 
+### 7. HTTP/SSE Transport Security
+- **Bearer Token Authentication**: Required `Authorization: Bearer <token>` header for all HTTP requests
+- **Transport Mode Selection**: Environment variable `MCP_TRANSPORT` controls stdio vs http mode
+- **Health Monitoring**: Dedicated `/healthz` endpoint for service monitoring
+- **Session Management**: Secure SSE session handling with automatic cleanup
+- **Protocol Compliance**: Full MCP JSON-RPC protocol over HTTP with streaming support
+
 ## 🏥 HIPAA Compliance Considerations
 
 ### Administrative Safeguards
@@ -92,6 +99,13 @@ export SECURITY_LOGGING=true
 export REQUIRE_HTTPS=true
 export PHI_MODE=safe
 export ENABLE_AUDIT=true
+
+# MCP Transport Configuration
+export MCP_TRANSPORT=http  # or 'stdio' for direct client integration
+export PORT=8080           # Required for HTTP transport
+
+# HTTP Transport Authentication (REQUIRED for production HTTP mode)
+export AUTH_TOKEN="your-secure-random-token-here"  # Bearer token for HTTP requests
 
 # Network security
 export ALLOWED_ORIGINS="https://your-domain.com,https://app.your-domain.com"

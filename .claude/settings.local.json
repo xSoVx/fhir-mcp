@@ -39,7 +39,10 @@
       "Bash(PORT=8080 FHIR_BASE_URL=https://hapi.fhir.org/baseR4 TERMINOLOGY_BASE_URL=https://tx.fhir.org/r4 PHI_MODE=safe ENABLE_AUDIT=true timeout 10s node dist/index.js)",
       "Bash(PORT=8765 FHIR_BASE_URL=https://hapi.fhir.org/baseR4 TERMINOLOGY_BASE_URL=https://tx.fhir.org/r4 PHI_MODE=safe ENABLE_AUDIT=true timeout 10s node dist/index.js)",
       "Bash(PORT=8765 FHIR_BASE_URL=https://hapi.fhir.org/baseR4 TERMINOLOGY_BASE_URL=https://tx.fhir.org/r4 PHI_MODE=safe ENABLE_AUDIT=true node dist/index.js)",
-      "Bash(PORT=8765 FHIR_BASE_URL=https://hapi.fhir.org/baseR4 TERMINOLOGY_BASE_URL=https://tx.fhir.org/r4 PHI_MODE=safe ENABLE_AUDIT=true timeout 15s node dist/index.js)"
+      "Bash(PORT=8765 FHIR_BASE_URL=https://hapi.fhir.org/baseR4 TERMINOLOGY_BASE_URL=https://tx.fhir.org/r4 PHI_MODE=safe ENABLE_AUDIT=true timeout 15s node dist/index.js)",
+      "Bash(PORT=8081 MCP_TRANSPORT=http timeout 10s node dist/http.js)",
+      "Bash(PORT=8081 MCP_TRANSPORT=http node dist/http.js)",
+      "Bash(PORT=8081 MCP_TRANSPORT=http AUTH_TOKEN=test123 node dist/http.js)"
     ],
     "deny": [],
     "ask": []

@@ -45,21 +45,31 @@ export ENABLE_AUDIT="true"
 
 ## Running the Server
 
-### Option 1: MCP Server (for Claude Desktop)
+### Option 1: MCP Server with STDIO (for Claude Desktop)
 ```bash
 cd packages/mcp-fhir-server
 npm run build
 FHIR_BASE_URL="https://hapi.fhir.org/baseR4" TERMINOLOGY_BASE_URL="https://tx.fhir.org/r4" PHI_MODE="safe" ENABLE_AUDIT="true" npm start
 ```
 
-### Option 2: HTTP Bridge (for web applications)
+### Option 2: MCP Server with HTTP/SSE (for remote access)
+```bash
+cd packages/mcp-fhir-server
+npm run build
+MCP_TRANSPORT=http PORT=8080 FHIR_BASE_URL="https://hapi.fhir.org/baseR4" TERMINOLOGY_BASE_URL="https://tx.fhir.org/r4" PHI_MODE="safe" ENABLE_AUDIT="true" npm run start:http
+```
+
+### Option 3: HTTP Bridge (for web applications)
 ```bash
 cd packages/examples/http-bridge
 npm run build
 PORT=3001 FHIR_BASE_URL="https://hapi.fhir.org/baseR4" TERMINOLOGY_BASE_URL="https://tx.fhir.org/r4" PHI_MODE="safe" ENABLE_AUDIT="true" npm start
 ```
 
-The MCP server starts in stdio mode for direct Claude integration, while the HTTP bridge provides REST endpoints at `http://localhost:3001`.
+**Transport Options:**
+- **STDIO** (default): Direct Claude Desktop integration
+- **HTTP/SSE**: Full MCP protocol over HTTP with Server-Sent Events for streaming
+- **HTTP Bridge**: REST API wrapper (different from native MCP over HTTP)
 
 ## Available Tools
 
