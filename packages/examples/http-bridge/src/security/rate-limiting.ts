@@ -233,7 +233,7 @@ export function recordFailedAttempt(req: Request, res: Response, next: NextFunct
 }
 
 // Error handler that records failed attempts for certain error types
-export function handleSuspiciousErrors(err: any, req: Request, res: Response, next: NextFunction): void {
+export function handleSuspiciousErrors(err: any, _req: Request, res: Response, next: NextFunction): void {
   const statusCode = err.status || err.statusCode || 500;
   
   // Record as suspicious for authentication errors, validation errors, etc.

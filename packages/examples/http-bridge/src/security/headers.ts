@@ -262,7 +262,7 @@ function generateRequestId(): string {
 }
 
 // Error handler for security violations
-export function securityErrorHandler(err: any, req: Request, res: Response, next: NextFunction): void {
+export function securityErrorHandler(err: any, req: Request, res: Response, _next: NextFunction): void {
   // Don't reveal internal error details in production
   if (process.env.NODE_ENV === 'production') {
     const sanitizedError = {

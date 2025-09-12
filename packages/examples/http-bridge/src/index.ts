@@ -63,7 +63,7 @@ app.use(cors({
 app.use(express.json({ 
   limit: '1mb',
   strict: true,
-  verify: (req: any, res: any, buf: Buffer) => {
+  verify: (req: any, _res: any, buf: Buffer) => {
     // Store raw body for signature verification if needed
     req.rawBody = buf;
   }
@@ -168,12 +168,12 @@ class HttpMcpBridge {
 const bridge = new HttpMcpBridge();
 
 // Health check endpoint
-app.get('/health', (req: Request, res: Response) => {
+app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // List available tools
-app.get('/tools', async (req: Request, res: Response) => {
+app.get('/tools', async (_req: Request, res: Response) => {
   try {
     const result = await bridge.sendRequest('tools/list');
     res.json(result);
