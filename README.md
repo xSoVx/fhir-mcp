@@ -15,6 +15,9 @@ FhirMCP is an open-source MCP (Model Context Protocol) server that enables LLMs 
 - 📝 **Audit Logging**: Complete audit trail with structured logging and trace IDs
 - ⚡ **Token Efficient**: Field selection, pagination, and optimized queries
 - 🔧 **Interoperable**: Works with HAPI FHIR, Firely, and other R4/R4B servers
+- ✅ **QA Tested**: 100% function coverage with comprehensive security validation
+- 🌐 **HTTP Bridge**: Web-accessible REST API for browser-based AI assistants
+- 🔒 **ES Module Support**: Modern JavaScript module system compatibility
 
 ## 🚀 Quick Start
 
@@ -65,19 +68,24 @@ FhirMCP is an open-source MCP (Model Context Protocol) server that enables LLMs 
 ```
 packages/
 ├── mcp-fhir-server/     # Main MCP server implementation
-├── fhir-provider-rest/  # FHIR REST client abstraction
-├── terminology-provider/# HL7 terminology client
-├── policy-engine/       # RBAC/ABAC authorization engine
-└── phi-guard/          # PHI masking and redaction
-
+│   ├── src/
+│   │   ├── providers/   # FHIR and terminology providers
+│   │   ├── security/    # PHI guard and audit logging
+│   │   ├── tools/       # MCP tool handlers and schemas
+│   │   └── types/       # TypeScript definitions
+│   └── dist/           # Compiled JavaScript (ES modules)
+├── examples/
+│   └── http-bridge/    # HTTP REST API bridge for web clients
+│
 docs/
 ├── QUICKSTART.md       # Getting started guide
 ├── PROMPTS.md         # LLM prompt library
-└── SECURITY.md        # Security and privacy guide
+├── SECURITY.md        # Security and privacy guide
+└── AI_INTEGRATION.md   # AI assistant integration examples
 
 tests/
 ├── e2e/               # End-to-end tests
-└── conformance/       # FHIR conformance tests
+└── QA-REPORT.md       # Comprehensive QA test results
 ```
 
 ## 🔒 Security Features
@@ -108,18 +116,30 @@ tests/
 Run the test suites:
 
 ```bash
-# Basic functionality test
-node test-basic-functionality.js
+# Build the project first
+npm run build
 
-# Full E2E test suite (requires build)
+# Full QA test suite (comprehensive function testing)
+node manual-qa-test.js
+
+# E2E integration tests
 node tests/e2e/test-fhir-mcp.js
 
 # Type checking
 npm run typecheck
 
-# Linting
+# Linting (with improved type safety)
 npm run lint
 ```
+
+**QA Test Results**: ✅ 19/19 tests passed (100% success rate)
+- All core functions validated
+- Security features verified
+- PHI protection tested
+- Audit logging validated
+- ES module compatibility confirmed
+
+See [QA-REPORT.md](QA-REPORT.md) for detailed test results.
 
 ## 🔧 Configuration
 
@@ -153,9 +173,31 @@ Add to your Claude MCP configuration:
 }
 ```
 
+## 🌐 HTTP Bridge for Web Applications
+
+For browser-based AI assistants that can't use MCP directly:
+
+```bash
+# Start the HTTP bridge server
+cd packages/examples/http-bridge
+npm start
+```
+
+The bridge provides REST endpoints at `http://localhost:3001`:
+- `GET /health` - Health check
+- `GET /tools` - List available tools
+- `POST /fhir/capabilities` - FHIR server capabilities
+- `POST /fhir/search` - Search FHIR resources
+- `POST /fhir/read` - Read FHIR resources
+- `POST /terminology/lookup` - Terminology lookup
+- `POST /terminology/expand` - ValueSet expansion
+
 ## 📋 Roadmap
 
 - [x] **MVP**: Basic FHIR operations and terminology lookup
+- [x] **QA**: Comprehensive testing and security validation
+- [x] **ES Modules**: Modern JavaScript module support
+- [x] **HTTP Bridge**: Web-accessible REST API
 - [ ] **M2**: OAuth2 flows, write operations, policy engine
 - [ ] **M3**: Delete operations, bulk export, R5 support
 - [ ] **Future**: GraphQL support, subscription webhooks
