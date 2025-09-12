@@ -161,7 +161,7 @@ export class SecurityMiddleware {
 
       // 4. Additional Healthcare Compliance Checks
       if (this.config.healthcareCompliant) {
-        const complianceResult = await this.performComplianceChecks(context, requestData);
+        const complianceResult = await this.performComplianceChecks(context);
         if (!complianceResult.compliant) {
           violations.push(...complianceResult.violations);
           riskLevel = complianceResult.riskLevel;
@@ -227,8 +227,7 @@ export class SecurityMiddleware {
    * Perform healthcare compliance checks
    */
   private async performComplianceChecks(
-    context: SecurityContext,
-    _requestData?: any
+    context: SecurityContext
   ): Promise<{
     compliant: boolean;
     violations: string[];
@@ -295,7 +294,7 @@ export class SecurityMiddleware {
     
     // Check for bulk access patterns that might indicate data mining
     if (context.operation === 'fhir.search' && context.phiLevel === PHILevel.IDENTIFIABLE) {
-      const recentRequests = await this.checkRecentPHIRequests(context.userId || context.sessionId);
+      const recentRequests = await this.checkRecentPHIRequests();
       if (recentRequests > 50) { // Configurable threshold
         return {
           allowed: false,
@@ -323,7 +322,7 @@ export class SecurityMiddleware {
   /**
    * Check recent PHI requests for patterns
    */
-  private async checkRecentPHIRequests(_identifier: string): Promise<number> {
+  private async checkRecentPHIRequests(): Promise<number> {
     // This would typically query a database or cache
     // For now, return a mock value
     return 0;

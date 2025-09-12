@@ -80,7 +80,7 @@ export class PHIAuthorizationEngine {
       }
 
       // Check for emergency access override
-      const emergencyGrant = this.checkEmergencyAccess(user, resource, operation);
+      const emergencyGrant = this.checkEmergencyAccess(user, resource);
       if (emergencyGrant) {
         auditMetadata.accessGranted = true;
         auditMetadata.emergencyAccess = true;
@@ -386,8 +386,7 @@ export class PHIAuthorizationEngine {
    */
   private checkEmergencyAccess(
     user: User | undefined,
-    resource: any,
-    _operation: string
+    resource: any
   ): EmergencyAccessGrant | null {
     
     if (!user || !this.config.allowEmergencyAccess) {
