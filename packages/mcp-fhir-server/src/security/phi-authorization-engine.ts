@@ -387,7 +387,7 @@ export class PHIAuthorizationEngine {
   private checkEmergencyAccess(
     user: User | undefined,
     resource: any,
-    operation: string
+    _operation: string
   ): EmergencyAccessGrant | null {
     
     if (!user || !this.config.allowEmergencyAccess) {

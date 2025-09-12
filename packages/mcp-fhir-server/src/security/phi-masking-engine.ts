@@ -73,7 +73,7 @@ export class PHIMaskingEngine {
 
     // If this is the target field, apply masking
     if (pathParts.length === 1) {
-      if (obj.hasOwnProperty(currentField)) {
+      if (Object.prototype.hasOwnProperty.call(obj, currentField)) {
         obj[currentField] = this.maskValue(obj[currentField], maskingType, options);
       }
       return;
@@ -83,7 +83,7 @@ export class PHIMaskingEngine {
     if (obj[currentField]) {
       if (Array.isArray(obj[currentField])) {
         // Handle array fields
-        obj[currentField].forEach((item: any, index: number) => {
+        obj[currentField].forEach((item: any) => {
           if (typeof item === 'object') {
             this.applyFieldMasking(item, remainingPath, maskingType, options);
           }

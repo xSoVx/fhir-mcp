@@ -187,9 +187,10 @@ export class InputValidator {
 
     // Parameter-specific validation
     switch (key) {
-      case '_count':
+      case '_count': {
         const count = parseInt(stringValue, 10);
         return (count >= 1 && count <= 1000) ? count : null;
+      }
         
       case '_sort':
         return this.isValidSortParam(stringValue) ? stringValue : null;
@@ -211,7 +212,7 @@ export class InputValidator {
    */
   private performApiValidation(operation: string, args: any): ValidationResult {
     const errors: string[] = [];
-    let sanitizedArgs = args;
+    const sanitizedArgs = args;
 
     switch (operation) {
       case 'fhir.search':

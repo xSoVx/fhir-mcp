@@ -1,4 +1,4 @@
-import { InputValidator, ValidationResult } from './input-validator.js';
+import { InputValidator } from './input-validator.js';
 import { RateLimiter, RateLimitRequest, RateLimitResult } from './rate-limiter.js';
 import { SecurityHeadersManager, SecurityHeaders } from './security-headers.js';
 import { AuditLogger } from './audit-logger.js';
@@ -228,7 +228,7 @@ export class SecurityMiddleware {
    */
   private async performComplianceChecks(
     context: SecurityContext,
-    requestData?: any
+    _requestData?: any
   ): Promise<{
     compliant: boolean;
     violations: string[];
@@ -323,7 +323,7 @@ export class SecurityMiddleware {
   /**
    * Check recent PHI requests for patterns
    */
-  private async checkRecentPHIRequests(identifier: string): Promise<number> {
+  private async checkRecentPHIRequests(_identifier: string): Promise<number> {
     // This would typically query a database or cache
     // For now, return a mock value
     return 0;

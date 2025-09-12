@@ -129,7 +129,6 @@ export class RateLimiter {
 
     // Check current request count
     const now = new Date();
-    const windowStart = new Date(now.getTime() - config.windowMs);
     
     let requestData = this.requestCounts.get(rateLimitKey);
     

@@ -1,7 +1,7 @@
 import { FhirResource } from '../types/fhir.js';
 import { PhiGuardConfig } from '../types/config.js';
 import { PHIAuthorizationEngine } from './phi-authorization-engine.js';
-import { User, PHIProtectionConfig, AuthorizationResult } from '../types/phi-types.js';
+import { User, PHIProtectionConfig } from '../types/phi-types.js';
 import { AuditLogger } from './audit-logger.js';
 
 export class PhiGuard {
