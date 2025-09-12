@@ -1,6 +1,6 @@
 import rateLimit from 'express-rate-limit';
 import slowDown from 'express-slow-down';
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 
 // Rate limit store for tracking by IP and API key
 class RateLimitStore {
@@ -139,7 +139,7 @@ export const writeRateLimit = rateLimit({
 export const progressiveDelay = slowDown({
   windowMs: 5 * 60 * 1000, // 5 minutes
   delayAfter: 10, // Allow 10 requests per window without delay
-  delayMs: (used, req) => {
+  delayMs: (used, _req) => {
     const delayAfter = 10; // Use fixed value since slowDown interface varies
     return (used - delayAfter) * 500; // Add 500ms delay for each request after the limit
   },
@@ -204,7 +204,7 @@ class SuspiciousActivityDetector {
 const suspiciousActivityDetector = new SuspiciousActivityDetector();
 
 // Middleware to check for blocked IPs
-export function checkBlocked(req: Request, res: Response, next: Function): void {
+export function checkBlocked(req: Request, res: Response, next: NextFunction): void {
   const ip = req.ip || req.connection.remoteAddress || 'unknown';
   
   if (suspiciousActivityDetector.isBlocked(ip)) {
@@ -221,7 +221,7 @@ export function checkBlocked(req: Request, res: Response, next: Function): void 
 }
 
 // Middleware to record failed attempts
-export function recordFailedAttempt(req: Request, res: Response, next: Function): void {
+export function recordFailedAttempt(req: Request, res: Response, next: NextFunction): void {
   const ip = req.ip || req.connection.remoteAddress || 'unknown';
   
   // Add a method to record failed attempts that can be called later
@@ -233,7 +233,7 @@ export function recordFailedAttempt(req: Request, res: Response, next: Function)
 }
 
 // Error handler that records failed attempts for certain error types
-export function handleSuspiciousErrors(err: any, req: Request, res: Response, next: Function): void {
+export function handleSuspiciousErrors(err: any, req: Request, res: Response, next: NextFunction): void {
   const statusCode = err.status || err.statusCode || 500;
   
   // Record as suspicious for authentication errors, validation errors, etc.
@@ -248,7 +248,7 @@ export function handleSuspiciousErrors(err: any, req: Request, res: Response, ne
 
 // Emergency bypass for rate limits (could be triggered by admin API key)
 export function createEmergencyBypass(emergencyApiKey: string) {
-  return (req: Request, res: Response, next: Function) => {
+  return (req: Request, res: Response, next: NextFunction) => {
     const apiKey = req.get('X-Emergency-Key');
     if (apiKey === emergencyApiKey) {
       // Skip all rate limiting by setting bypass headers
