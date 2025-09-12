@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "fhir": {
+      "command": "node",
+      "args": ["C:/fhir/FhirMCP/FhirMCP/packages/mcp-fhir-server/dist/index.js"],
+      "env": {
+        "FHIR_BASE_URL": "https://hapi.fhir.org/baseR4",
+        "TERMINOLOGY_BASE_URL": "https://tx.fhir.org/r4",
+        "PHI_MODE": "safe",
+        "ENABLE_AUDIT": "true"
+      }
+    }
+  }
+}
