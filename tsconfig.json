@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2020",
-    "module": "commonjs",
+    "module": "ESNext",
     "lib": ["ES2020"],
     "outDir": "./dist",
     "rootDir": "./packages",
@@ -13,7 +13,8 @@
     "declarationMap": true,
     "sourceMap": true,
     "resolveJsonModule": true,
-    "moduleResolution": "node"
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true
   },
   "include": ["packages/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]
