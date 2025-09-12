@@ -7,7 +7,7 @@ export interface AuditEvent {
   userId?: string;
   success: boolean;
   error?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export class AuditLogger {
@@ -41,7 +41,7 @@ export class AuditLogger {
     resourceId?: string,
     success: boolean = true,
     error?: string,
-    metadata?: Record<string, any>
+    metadata?: Record<string, unknown>
   ) {
     this.log({
       operation: `fhir.${operation}`,
@@ -57,7 +57,7 @@ export class AuditLogger {
     operation: string,
     success: boolean = true,
     error?: string,
-    metadata?: Record<string, any>
+    metadata?: Record<string, unknown>
   ) {
     this.log({
       operation: `terminology.${operation}`,
@@ -71,7 +71,7 @@ export class AuditLogger {
     return Math.random().toString(36).substring(2) + Date.now().toString(36);
   }
 
-  private redactSensitiveData(data: Record<string, any>): Record<string, any> {
+  private redactSensitiveData(data: Record<string, unknown>): Record<string, unknown> {
     const redacted = { ...data };
     const sensitiveFields = ['token', 'authorization', 'password', 'secret', 'ssn', 'birthdate'];
     

@@ -11,19 +11,19 @@ interface McpRequest {
   jsonrpc: string;
   id: number;
   method: string;
-  params?: any;
+  params?: unknown;
 }
 
 interface McpResponse {
   jsonrpc: string;
   id: number;
-  result?: any;
-  error?: any;
+  result?: unknown;
+  error?: { code: number; message: string; data?: unknown };
 }
 
 class HttpMcpBridge {
   private mcpProcess: any;
-  private requestQueue: Map<number, { resolve: Function; reject: Function }> = new Map();
+  private requestQueue: Map<number, { resolve: (value: unknown) => void; reject: (reason?: unknown) => void }> = new Map();
   private requestId = 1;
 
   constructor() {
@@ -77,7 +77,7 @@ class HttpMcpBridge {
     });
   }
 
-  async sendRequest(method: string, params: any = {}): Promise<any> {
+  async sendRequest(method: string, params: unknown = {}): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const id = this.requestId++;
       const request: McpRequest = {

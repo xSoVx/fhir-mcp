@@ -57,10 +57,10 @@ export class TerminologyProvider {
           case 'property':
             if (!result.properties) result.properties = {};
             if (param.part) {
-              const code = param.part.find((p: any) => p.name === 'code')?.valueCode;
-              const value = param.part.find((p: any) => p.name === 'value')?.valueString || 
-                           param.part.find((p: any) => p.name === 'value')?.valueBoolean ||
-                           param.part.find((p: any) => p.name === 'value')?.valueInteger;
+              const code = param.part.find((p: Record<string, unknown>) => p.name === 'code')?.valueCode;
+              const value = param.part.find((p: Record<string, unknown>) => p.name === 'value')?.valueString || 
+                           param.part.find((p: Record<string, unknown>) => p.name === 'value')?.valueBoolean ||
+                           param.part.find((p: Record<string, unknown>) => p.name === 'value')?.valueInteger;
               if (code && value !== undefined) {
                 result.properties[code] = value;
               }
@@ -97,7 +97,7 @@ export class TerminologyProvider {
         if (param.name === 'result' && param.valueBoolean) {
           result.result = param.valueBoolean;
         } else if (param.name === 'match' && param.part) {
-          const match: any = {};
+          const match: { code?: string; system?: string; display?: string } = {};
           for (const part of param.part) {
             switch (part.name) {
               case 'code':
@@ -112,7 +112,7 @@ export class TerminologyProvider {
             }
           }
           if (match.code && match.system) {
-            result.match = match;
+            result.match = match as { code: string; system: string; display?: string };
           }
         }
       }
