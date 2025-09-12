@@ -9,6 +9,7 @@ import { FhirProvider } from './providers/fhir-provider.js';
 import { TerminologyProvider } from './providers/terminology-provider.js';
 import { PhiGuard } from './security/phi-guard.js';
 import { AuditLogger } from './security/audit-logger.js';
+import { SecurityMiddleware } from './security/security-middleware.js';
 import { FhirTools } from './tools/fhir-tools.js';
 import { TerminologyTools } from './tools/terminology-tools.js';
 import { FhirMcpConfig } from './types/config.js';
@@ -20,6 +21,7 @@ class FhirMcpServer {
   private terminologyProvider: TerminologyProvider;
   private phiGuard: PhiGuard;
   private auditLogger: AuditLogger;
+  private securityMiddleware: SecurityMiddleware;
   private fhirTools: FhirTools;
   private terminologyTools: TerminologyTools;
 
@@ -47,16 +49,37 @@ class FhirMcpServer {
       this.config.terminology.bearerToken
     );
     
+    this.auditLogger = new AuditLogger(this.config.security.enableAudit);
+    
     this.phiGuard = new PhiGuard({
       mode: this.config.security.phiMode,
       maskFields: [],
       removeFields: []
-    });
-    
-    this.auditLogger = new AuditLogger(this.config.security.enableAudit);
+    }, this.auditLogger);
 
-    // Initialize tool handlers
-    this.fhirTools = new FhirTools(this.fhirProvider, this.phiGuard, this.auditLogger);
+    // Initialize enhanced security middleware
+    this.securityMiddleware = new SecurityMiddleware({
+      enableInputValidation: true,
+      enableRateLimiting: true,
+      enableSecurityHeaders: true,
+      enableAuditLogging: this.config.security.enableAudit,
+      healthcareCompliant: true,
+      rateLimitOverrides: {
+        'phi_strict': {
+          windowMs: 60 * 1000,
+          maxRequests: this.config.security.phiMode === 'safe' ? 10 : 50,
+          keyGenerator: (req: any) => `phi_strict:${req.userId || req.sessionId}`
+        }
+      }
+    }, this.auditLogger);
+
+    // Initialize tool handlers with enhanced security
+    this.fhirTools = new FhirTools(
+      this.fhirProvider, 
+      this.phiGuard, 
+      this.auditLogger,
+      this.securityMiddleware
+    );
     this.terminologyTools = new TerminologyTools(this.terminologyProvider, this.auditLogger);
 
     // Initialize MCP server
@@ -134,11 +157,41 @@ class FhirMcpServer {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
     
-    console.error('FHIR-MCP server started');
-    console.error(`FHIR Base URL: ${this.config.fhir.baseUrl}`);
-    console.error(`Terminology Base URL: ${this.config.terminology.baseUrl}`);
-    console.error(`PHI Mode: ${this.config.security.phiMode}`);
-    console.error(`Audit Enabled: ${this.config.security.enableAudit}`);
+    // Log server startup with security information
+    console.error('🔒 FHIR-MCP server started with enhanced security');
+    console.error(`📍 FHIR Base URL: ${this.config.fhir.baseUrl}`);
+    console.error(`📚 Terminology Base URL: ${this.config.terminology.baseUrl}`);
+    console.error(`🛡️ PHI Protection Mode: ${this.config.security.phiMode}`);
+    console.error(`📋 Audit Logging: ${this.config.security.enableAudit ? 'ENABLED' : 'DISABLED'}`);
+    
+    // Log security features status
+    const securityStats = this.securityMiddleware.getStats();
+    console.error('🔐 Security Features:');
+    console.error(`   • Input Validation: ENABLED`);
+    console.error(`   • Rate Limiting: ENABLED`);
+    console.error(`   • Security Headers: ENABLED`);
+    console.error(`   • Healthcare Compliance: ENABLED`);
+    console.error(`   • PHI Authorization: ENABLED`);
+    console.error(`   • Compliance Level: ${securityStats.securityHeaders.complianceLevel.toUpperCase()}`);
+    
+    // Log initial security audit
+    await this.auditLogger.log({
+      operation: 'server.startup',
+      success: true,
+      metadata: {
+        phiMode: this.config.security.phiMode,
+        auditEnabled: this.config.security.enableAudit,
+        securityFeaturesEnabled: {
+          inputValidation: true,
+          rateLimiting: true,
+          securityHeaders: true,
+          healthcareCompliant: true,
+          phiAuthorization: true
+        },
+        timestamp: new Date().toISOString(),
+        version: '0.1.0'
+      }
+    });
   }
 }
 

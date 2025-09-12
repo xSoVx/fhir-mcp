@@ -1,10 +1,8 @@
-version: '3.8'
-
 services:
   fhir-mcp-bridge:
     build: .
     ports:
-      - "3001:3001"
+      - "3002:3001"
     environment:
       # Application settings
       - NODE_ENV=production

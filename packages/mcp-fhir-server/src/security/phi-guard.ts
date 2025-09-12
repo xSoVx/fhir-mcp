@@ -1,11 +1,83 @@
 import { FhirResource } from '../types/fhir.js';
 import { PhiGuardConfig } from '../types/config.js';
+import { PHIAuthorizationEngine } from './phi-authorization-engine.js';
+import { User, PHIProtectionConfig, AuthorizationResult } from '../types/phi-types.js';
+import { AuditLogger } from './audit-logger.js';
 
 export class PhiGuard {
   private config: PhiGuardConfig;
+  private phiAuthEngine?: PHIAuthorizationEngine;
 
-  constructor(config: PhiGuardConfig) {
+  constructor(config: PhiGuardConfig, auditLogger?: AuditLogger) {
     this.config = config;
+    
+    // Initialize PHI authorization engine if audit logger provided
+    if (auditLogger) {
+      const phiConfig: PHIProtectionConfig = {
+        enabled: config.mode !== 'trusted',
+        mode: config.mode === 'safe' ? 'strict' : 'permissive',
+        allowEmergencyAccess: true,
+        emergencyAccessDurationMinutes: 30,
+        auditAllAccess: true,
+        defaultMaskingRules: [],
+        resourceOverrides: {}
+      };
+      
+      this.phiAuthEngine = new PHIAuthorizationEngine(phiConfig, auditLogger);
+    }
+  }
+
+  /**
+   * Enhanced authorization check using PHI engine
+   */
+  async authorizeAndMaskResource(
+    resource: FhirResource, 
+    user?: User,
+    operation: string = 'read',
+    sessionId: string = 'unknown'
+  ): Promise<{ authorized: boolean; maskedResource?: FhirResource; reason?: string }> {
+    
+    // Use new PHI authorization engine if available
+    if (this.phiAuthEngine) {
+      try {
+        const authResult = await this.phiAuthEngine.authorizeResourceAccess(
+          user, 
+          resource, 
+          operation, 
+          sessionId
+        );
+
+        if (!authResult.allowed) {
+          return {
+            authorized: false,
+            reason: authResult.message || authResult.reason
+          };
+        }
+
+        // Apply masking if required
+        let maskedResource = resource;
+        if (authResult.requiresMasking) {
+          maskedResource = this.phiAuthEngine.applyMasking(resource, authResult);
+        }
+
+        return {
+          authorized: true,
+          maskedResource
+        };
+
+      } catch (error) {
+        return {
+          authorized: false,
+          reason: error instanceof Error ? error.message : 'PHI authorization failed'
+        };
+      }
+    }
+
+    // Fallback to legacy masking
+    return {
+      authorized: true,
+      maskedResource: this.maskResource(resource)
+    };
   }
 
   maskResource(resource: FhirResource): FhirResource {

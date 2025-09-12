@@ -24,7 +24,11 @@
       "Bash(for i in {1..10})",
       "Bash(echo:*)",
       "Bash(done)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(npx jest:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker-compose:*)",
+      "Bash(docker exec:*)"
     ],
     "deny": [],
     "ask": []

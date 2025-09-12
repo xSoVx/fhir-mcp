@@ -94,7 +94,10 @@ class HttpMcpBridge {
   }
 
   private startMcpServer() {
-    const serverPath = path.join(__dirname, '../../../mcp-fhir-server/dist/index.js');
+    // Use absolute path to avoid resolution issues in different environments
+    const serverPath = process.env.NODE_ENV === 'production' 
+      ? '/usr/src/app/packages/mcp-fhir-server/dist/index.js'
+      : path.join(__dirname, '../../mcp-fhir-server/dist/index.js');
     
     this.mcpProcess = spawn('node', [serverPath], {
       stdio: ['pipe', 'pipe', 'inherit'],

@@ -13,22 +13,26 @@ RUN apk update && apk upgrade && \
 # Set working directory
 WORKDIR /usr/src/app
 
-# Copy package files
+# Copy package files for dependency installation
 COPY package*.json ./
 COPY packages/mcp-fhir-server/package*.json ./packages/mcp-fhir-server/
 COPY packages/examples/http-bridge/package*.json ./packages/examples/http-bridge/
-COPY tsconfig.json ./
 
-# Install dependencies
-RUN npm ci --only=production && npm cache clean --force
+# Install all dependencies (including dev dependencies for building)
+RUN npm ci && npm cache clean --force
 
 # Copy source code
 COPY packages/ ./packages/
 COPY spec/ ./spec/
+COPY tsconfig.json ./
 
 # Build the applications
-RUN npm run build -w packages/mcp-fhir-server && \
-    npm run build -w packages/examples/http-bridge
+RUN npm run build --workspace=packages/mcp-fhir-server && \
+    npm run build --workspace=packages/examples/http-bridge
+
+# Verify build outputs exist
+RUN ls -la packages/mcp-fhir-server/dist/ && \
+    ls -la packages/examples/http-bridge/dist/
 
 # Production stage
 FROM node:18-alpine
@@ -45,10 +49,20 @@ RUN addgroup -g 1001 -S fhir-mcp && \
 # Set working directory
 WORKDIR /usr/src/app
 
-# Copy built applications and dependencies
-COPY --from=builder --chown=fhir-mcp:fhir-mcp /usr/src/app/node_modules ./node_modules
-COPY --from=builder --chown=fhir-mcp:fhir-mcp /usr/src/app/packages ./packages
+# Copy package files first
 COPY --from=builder --chown=fhir-mcp:fhir-mcp /usr/src/app/package*.json ./
+COPY --from=builder --chown=fhir-mcp:fhir-mcp /usr/src/app/packages/mcp-fhir-server/package*.json ./packages/mcp-fhir-server/
+COPY --from=builder --chown=fhir-mcp:fhir-mcp /usr/src/app/packages/examples/http-bridge/package*.json ./packages/examples/http-bridge/
+
+# Install only production dependencies
+RUN npm ci --only=production && npm cache clean --force
+
+# Copy built applications
+COPY --from=builder --chown=fhir-mcp:fhir-mcp /usr/src/app/packages/mcp-fhir-server/dist ./packages/mcp-fhir-server/dist
+COPY --from=builder --chown=fhir-mcp:fhir-mcp /usr/src/app/packages/examples/http-bridge/dist ./packages/examples/http-bridge/dist
+
+# Create logs directory
+RUN mkdir -p /usr/src/app/logs && chown -R fhir-mcp:fhir-mcp /usr/src/app/logs
 
 # Set security-focused environment variables
 ENV NODE_ENV=production

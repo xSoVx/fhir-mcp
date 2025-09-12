@@ -2,6 +2,8 @@ import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { FhirProvider } from '../providers/fhir-provider.js';
 import { PhiGuard } from '../security/phi-guard.js';
 import { AuditLogger } from '../security/audit-logger.js';
+import { SecurityMiddleware, SecurityContext } from '../security/security-middleware.js';
+import { PHILevel, RESOURCE_PHI_MATRIX } from '../types/phi-types.js';
 import { 
   FhirCapabilitiesSchema, 
   FhirSearchSchema, 
@@ -11,11 +13,18 @@ import {
 } from './schemas.js';
 
 export class FhirTools {
+  private securityMiddleware: SecurityMiddleware;
+
   constructor(
     private fhirProvider: FhirProvider,
     private phiGuard: PhiGuard,
-    private auditLogger: AuditLogger
-  ) {}
+    private auditLogger: AuditLogger,
+    securityMiddleware?: SecurityMiddleware
+  ) {
+    this.securityMiddleware = securityMiddleware || new SecurityMiddleware({
+      healthcareCompliant: true
+    }, this.auditLogger);
+  }
 
   getCapabilitiesTool(): Tool {
     return {
@@ -185,8 +194,31 @@ export class FhirTools {
   }
 
   async handleSearch(args: any): Promise<any> {
+    // Create security context
+    const securityContext: SecurityContext = {
+      sessionId: 'search-' + Date.now(),
+      operation: 'fhir.search',
+      resourceType: args.resourceType,
+      phiLevel: this.getResourcePHILevel(args.resourceType)
+    };
+
     try {
-      const input = FhirSearchSchema.parse(args);
+      // Process security checks
+      const securityResult = await this.securityMiddleware.processRequest(securityContext, args);
+      
+      if (!securityResult.allowed) {
+        return {
+          content: [{
+            type: 'text', 
+            text: `Access denied: ${securityResult.reason}. Violations: ${securityResult.securityViolations?.join(', ') || 'None'}`
+          }],
+          isError: true
+        };
+      }
+
+      // Use validated input
+      const input = securityResult.validatedInput || args;
+      
       const bundle = await this.fhirProvider.search(
         input.resourceType,
         input.params,
@@ -195,11 +227,33 @@ export class FhirTools {
         input.sort
       );
 
-      // Apply PHI protection
-      const maskedEntries = bundle.entry?.map(entry => ({
-        ...entry,
-        resource: entry.resource ? this.phiGuard.maskResource(entry.resource) : undefined
-      })) || [];
+      // Apply PHI protection with enhanced authorization
+      const maskedEntries = [];
+      if (bundle.entry) {
+        for (const entry of bundle.entry) {
+          if (entry.resource) {
+            try {
+              const authResult = await this.phiGuard.authorizeAndMaskResource(
+                entry.resource,
+                undefined, // No user context in current implementation
+                'read',
+                `search_${Date.now()}`
+              );
+
+              if (authResult.authorized) {
+                maskedEntries.push({
+                  ...entry,
+                  resource: authResult.maskedResource
+                });
+              }
+              // Skip unauthorized resources silently
+            } catch (error) {
+              // Log error but continue processing other entries
+              console.warn('PHI authorization error:', error);
+            }
+          }
+        }
+      }
 
       const result = {
         total: bundle.total,
@@ -230,13 +284,47 @@ export class FhirTools {
   }
 
   async handleRead(args: any): Promise<any> {
+    const securityContext: SecurityContext = {
+      sessionId: 'read-' + Date.now(),
+      operation: 'fhir.read',
+      resourceType: args.resourceType,
+      phiLevel: this.getResourcePHILevel(args.resourceType)
+    };
+
     try {
-      const input = FhirReadSchema.parse(args);
+      // Process security checks
+      const securityResult = await this.securityMiddleware.processRequest(securityContext, args);
+      
+      if (!securityResult.allowed) {
+        return {
+          content: [{
+            type: 'text', 
+            text: `Read access denied: ${securityResult.reason}`
+          }],
+          isError: true
+        };
+      }
+
+      const input = securityResult.validatedInput || args;
       const resource = await this.fhirProvider.read(input.resourceType, input.id, input.elements);
       
-      // Apply PHI protection
-      const maskedResource = this.phiGuard.maskResource(resource);
+      // Apply PHI protection with enhanced authorization engine
+      const authResult = await this.phiGuard.authorizeAndMaskResource(
+        resource,
+        undefined, // No user context in current implementation
+        'read',
+        securityContext.sessionId
+      );
 
+      if (!authResult.authorized) {
+        this.auditLogger.logFhirOperation('read', input.resourceType, input.id, false, authResult.reason);
+        return {
+          content: [{ type: 'text', text: `Access denied: ${authResult.reason || 'PHI protection active'}` }],
+          isError: true
+        };
+      }
+
+      const maskedResource = authResult.maskedResource;
       this.auditLogger.logFhirOperation('read', input.resourceType, input.id, true);
 
       return {
@@ -254,8 +342,28 @@ export class FhirTools {
   }
 
   async handleCreate(args: any): Promise<any> {
+    const securityContext: SecurityContext = {
+      sessionId: 'create-' + Date.now(),
+      operation: 'fhir.create',
+      resourceType: args.resourceType,
+      phiLevel: this.getResourcePHILevel(args.resourceType)
+    };
+
     try {
-      const input = FhirCreateSchema.parse(args);
+      // Process security checks
+      const securityResult = await this.securityMiddleware.processRequest(securityContext, args);
+      
+      if (!securityResult.allowed) {
+        return {
+          content: [{
+            type: 'text', 
+            text: `Create denied: ${securityResult.reason}`
+          }],
+          isError: true
+        };
+      }
+
+      const input = securityResult.validatedInput || args;
       const resource = { ...input.resource, resourceType: input.resourceType };
       const created = await this.fhirProvider.create(input.resourceType, resource);
 
@@ -282,8 +390,28 @@ export class FhirTools {
   }
 
   async handleUpdate(args: any): Promise<any> {
+    const securityContext: SecurityContext = {
+      sessionId: 'update-' + Date.now(),
+      operation: 'fhir.update',
+      resourceType: args.resourceType,
+      phiLevel: this.getResourcePHILevel(args.resourceType)
+    };
+
     try {
-      const input = FhirUpdateSchema.parse(args);
+      // Process security checks
+      const securityResult = await this.securityMiddleware.processRequest(securityContext, args);
+      
+      if (!securityResult.allowed) {
+        return {
+          content: [{
+            type: 'text', 
+            text: `Update denied: ${securityResult.reason}`
+          }],
+          isError: true
+        };
+      }
+
+      const input = securityResult.validatedInput || args;
       const resource = { ...input.resource, resourceType: input.resourceType };
       const updated = await this.fhirProvider.update(
         input.resourceType, 
@@ -312,5 +440,13 @@ export class FhirTools {
         isError: true
       };
     }
+  }
+
+  /**
+   * Helper method to determine PHI level for a resource type
+   */
+  private getResourcePHILevel(resourceType?: string): PHILevel {
+    if (!resourceType) return PHILevel.RESTRICTED;
+    return RESOURCE_PHI_MATRIX[resourceType] || PHILevel.RESTRICTED;
   }
 }

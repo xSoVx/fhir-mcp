@@ -7,6 +7,7 @@ export interface AuditEvent {
   userId?: string;
   success: boolean;
   error?: string;
+  duration?: number;
   metadata?: Record<string, unknown>;
 }
 

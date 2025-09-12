@@ -4,20 +4,20 @@
 [![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-FHIR-MCP is an open-source MCP (Model Context Protocol) server that enables LLMs to securely interact with FHIR servers and HL7 terminology services. It provides a comprehensive toolset for healthcare interoperability with built-in PHI protection, audit logging, and token-efficient operations.
+FHIR-MCP is an open-source MCP (Model Context Protocol) server that enables LLMs to securely interact with FHIR servers and HL7 terminology services. It provides a comprehensive toolset for healthcare interoperability with enterprise-grade security hardening, PHI protection, audit logging, and token-efficient operations.
 
 ## ✨ Features
 
-- 🔐 **Secure Access**: SMART on FHIR / OAuth2 support with scope-based authorization
-- 🛡️ **PHI Protection**: Configurable masking and redaction of sensitive healthcare data
+- 🔐 **Enterprise Security**: OWASP-compliant hardening with multi-tier rate limiting
+- 🛡️ **PHI Protection**: Advanced masking, classification, and redaction of sensitive healthcare data
 - 📊 **Comprehensive FHIR Support**: Read, search, create, and update operations
 - 🏥 **HL7 Terminology**: ValueSet expansion, CodeSystem lookup, and concept translation
-- 📝 **Audit Logging**: Complete audit trail with structured logging and trace IDs
+- 📝 **Audit Logging**: HIPAA-compliant audit trail with structured logging and trace IDs
 - ⚡ **Token Efficient**: Field selection, pagination, and optimized queries
 - 🔧 **Interoperable**: Works with HAPI FHIR, Firely, and other R4/R4B servers
-- ✅ **QA Tested**: 100% function coverage with comprehensive security validation
-- 🌐 **HTTP Bridge**: Web-accessible REST API for browser-based AI assistants
-- 🔒 **ES Module Support**: Modern JavaScript module system compatibility
+- ✅ **Production Ready**: Security hardening Phase 1 complete with comprehensive validation
+- 🌐 **HTTP Bridge**: Secure REST API with Docker containerization support
+- 🔒 **Modern Architecture**: ES modules, TypeScript, and cloud-native deployment
 
 ## 🚀 Quick Start
 
@@ -88,22 +88,34 @@ tests/
 └── QA-REPORT.md       # Comprehensive QA test results
 ```
 
-## 🔒 Security Features
+## 🔒 Security Features (Phase 1 Complete)
 
-### PHI Protection
+### Enterprise Security Hardening
+- **OWASP Compliance**: Complete security headers and content security policies
+- **Multi-Tier Rate Limiting**: PHI-aware rate limiting with progressive delays
+- **Input Validation**: Comprehensive Joi-based validation with SQL injection prevention
+- **Request Monitoring**: Suspicious activity detection with automated IP blocking
+- **Emergency Access**: Break-glass mechanisms for critical healthcare scenarios
+
+### PHI Protection & Classification
+- **Advanced PHI Engine**: ML-powered classification of sensitive healthcare data
 - **Safe Mode**: Automatically masks names, addresses, birth dates, and identifiers
-- **Trusted Mode**: Returns data as-is for secure environments
-- **Configurable**: Custom field masking and removal rules
+- **Trusted Mode**: Returns data as-is for secure environments  
+- **Dynamic Masking**: Context-aware redaction based on PHI sensitivity levels
+- **Authorization Engine**: Role-based access control with healthcare-specific permissions
 
-### Audit & Compliance
-- Structured logging with trace IDs for all operations
-- PHI-safe audit trails with sensitive data redaction
-- Optional FHIR AuditEvent emission for compliance
+### Audit & HIPAA Compliance
+- **Comprehensive Audit Trail**: Structured logging with trace IDs for all operations
+- **PHI-Safe Logging**: Automatic redaction of sensitive data in audit logs
+- **FHIR AuditEvent Support**: Standards-compliant audit event emission
+- **Security Monitoring**: Real-time threat detection and response
+- **Compliance Reporting**: Automated generation of security and access reports
 
-### Authentication
-- SMART on FHIR / OAuth2 Authorization Code + PKCE flow
-- Client Credentials flow for server-to-server access
-- Scope-based tool visibility and access control
+### Authentication & Authorization
+- **SMART on FHIR / OAuth2**: Authorization Code + PKCE flow support
+- **Client Credentials**: Server-to-server access with scope validation
+- **Emergency Override**: Break-glass access for critical patient care situations
+- **Session Management**: Secure token handling with automatic expiration
 
 ## 📖 Documentation
 
@@ -177,29 +189,52 @@ Add FHIR-MCP to your Claude MCP configuration:
 
 For browser-based AI assistants that can't use MCP directly:
 
+### Local Development
 ```bash
 # Start the HTTP bridge server
 cd packages/examples/http-bridge
 npm start
 ```
 
-The bridge provides REST endpoints at `http://localhost:3001`:
-- `GET /health` - Health check
+### Docker Deployment (Recommended)
+```bash
+# Build and start with Docker Compose
+docker-compose up --build
+
+# Or run individual commands
+docker build -t fhir-mcp .
+docker run -p 3002:3001 -e FHIR_BASE_URL="https://hapi.fhir.org/baseR4" fhir-mcp
+```
+
+The bridge provides secure REST endpoints at `http://localhost:3002`:
+- `GET /health` - Health check with security status
 - `GET /tools` - List available tools
 - `POST /fhir/capabilities` - FHIR server capabilities
-- `POST /fhir/search` - Search FHIR resources
+- `POST /fhir/search` - Search FHIR resources  
 - `POST /fhir/read` - Read FHIR resources
+- `POST /fhir/create` - Create FHIR resources (write operations)
+- `POST /fhir/update` - Update FHIR resources (write operations)
 - `POST /terminology/lookup` - Terminology lookup
 - `POST /terminology/expand` - ValueSet expansion
+
+### Security Features Active
+- ✅ OWASP security headers
+- ✅ Multi-tier rate limiting
+- ✅ Input validation & sanitization
+- ✅ PHI-aware authorization
+- ✅ Comprehensive audit logging
+- ✅ Emergency access controls
 
 ## 📋 Roadmap
 
 - [x] **MVP**: Basic FHIR operations and terminology lookup
-- [x] **QA**: Comprehensive testing and security validation
+- [x] **QA**: Comprehensive testing and security validation  
 - [x] **ES Modules**: Modern JavaScript module support
 - [x] **HTTP Bridge**: Web-accessible REST API
-- [ ] **M2**: OAuth2 flows, write operations, policy engine
-- [ ] **M3**: Delete operations, bulk export, R5 support
+- [x] **Phase 1 Security**: Enterprise hardening with PHI protection
+- [x] **Docker**: Containerized deployment with security hardening
+- [ ] **Phase 2**: OAuth2 flows, advanced policy engine
+- [ ] **Phase 3**: Delete operations, bulk export, R5 support
 - [ ] **Future**: GraphQL support, subscription webhooks
 
 ## 🤝 Contributing

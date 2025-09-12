@@ -10,6 +10,9 @@ export interface FhirMcpConfig {
   security: {
     phiMode: 'safe' | 'trusted';
     enableAudit: boolean;
+    phiProtectionMode?: 'strict' | 'permissive' | 'audit-only';
+    allowEmergencyAccess?: boolean;
+    emergencyAccessDurationMinutes?: number;
   };
 }
 
