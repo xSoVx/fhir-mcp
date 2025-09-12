@@ -1,5 +1,7 @@
 # FHIR-MCP Implementation Roadmap
+Error:   265:77  error    '_next' is defined but never used         @typescript-eslint/no-unused-vars
 
+/home/runner/work/fhir-mcp/fhir-mcp/packages/examples/http-bridge/src/security/rate-limiting.ts
 ## Executive Summary
 
 This roadmap consolidates all findings from the comprehensive QA assessment and provides a structured implementation plan for enhancing the FHIR-MCP project. The project shows strong technical foundation but requires critical security and performance improvements to achieve production readiness and market leadership.

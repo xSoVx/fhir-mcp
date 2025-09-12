@@ -262,7 +262,8 @@ function generateRequestId(): string {
 }
 
 // Error handler for security violations
-export function securityErrorHandler(err: any, req: Request, res: Response, _next: NextFunction): void {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function securityErrorHandler(err: any, req: Request, res: Response, next: NextFunction): void {
   // Don't reveal internal error details in production
   if (process.env.NODE_ENV === 'production') {
     const sanitizedError = {
