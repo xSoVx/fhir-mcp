@@ -10,6 +10,8 @@
   "scripts": {
     "build": "npm run build --workspaces",
     "test": "npm run test --workspaces",
+    "test:gate": "npm run test:gate -w @fhir-mcp/server",
+    "typecheck:tests": "npm run typecheck:tests -w @fhir-mcp/server",
     "lint": "eslint packages/**/*.ts",
     "typecheck": "tsc --noEmit"
   },

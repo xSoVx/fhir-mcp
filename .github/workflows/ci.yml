@@ -9,36 +9,59 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     strategy:
       matrix:
         node-version: [18.x, 20.x, 22.x]
-        
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
+
     - name: Use Node.js ${{ matrix.node-version }}
       uses: actions/setup-node@v4
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
-        
+
     - name: Install dependencies
       run: npm ci
-      
+
     - name: Run type checking
       run: npm run typecheck
-      
+
+    # The root tsconfig.json excludes **/*.test.ts, so the step above never
+    # sees a test file. This one does. Without it, a type error in any test
+    # added by the PHI remediation work would only surface at runtime.
+    - name: Run type checking (tests)
+      run: npm run typecheck:tests
+
     - name: Build project
       run: npm run build
-      
+
     - name: Run linter
       run: npm run lint
-      
+
+    # The gate. Runs the full jest suite -- unit tests, the golden-file corpus
+    # and the PHI canary -- and compares the failure set against
+    # packages/mcp-fhir-server/test-baseline.json.
+    #
+    # It fails on a new failure, on a quarantined test that has started
+    # passing (prune the manifest), and on zero tests executing. A plain
+    # `npm test` cannot be used here: 8 pre-existing failures were uncovered
+    # when T0.1 made the suite runnable, so a raw jest exit code is red on a
+    # clean checkout and carries no information.
+    #
+    # Hermetic: no network, unlike the smoke test below.
+    - name: Run unit tests, golden corpus and PHI canary
+      run: npm run test:gate
+
+    # NOTE: network-dependent. This boots the server and calls a live FHIR
+    # endpoint, so it will fail in any network-isolated runner. It is NOT the
+    # project's test gate -- the step above is. Left in place unchanged.
     - name: Run basic functionality tests
       run: node test-basic-functionality.js
-      
+
     - name: Check package versions
       run: |
         echo "Root package version: $(node -p "require('./package.json').version")"

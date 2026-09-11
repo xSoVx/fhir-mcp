@@ -1,0 +1,22 @@
+{
+  // Typecheck configuration for test files.
+  //
+  // The root tsconfig.json excludes "**/*.test.ts", so `npm run typecheck` says
+  // nothing about type errors in any test -- including every test the PHI
+  // remediation plan adds. This config exists purely to close that hole; it
+  // emits nothing and is only ever run with --noEmit.
+  //
+  // The compiler options mirror what ts-jest applies at runtime (see the
+  // `transform` block in jest.config.js) so that a file which typechecks here
+  // is a file that will actually load under jest.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "module": "es2022",
+    "target": "es2022",
+    "moduleResolution": "node",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.test.ts"],
+  "exclude": ["node_modules", "dist"]
+}
