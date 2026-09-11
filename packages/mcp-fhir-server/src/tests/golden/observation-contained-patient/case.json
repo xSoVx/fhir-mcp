@@ -1,0 +1,11 @@
+{
+  "description": "Observation whose contained[] holds a full Patient with its own resourceType, identifier and narrative. Masking rules are selected from the OUTER resource type, so the contained Patient is never dispatched on.",
+  "path": "engine",
+  "user": "clinician",
+  "mode": "permissive",
+  "surfaces": [
+    "contained[]",
+    "subject.reference",
+    "note"
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "masked": {
+    "resourceType": "DocumentReference",
+    "id": "golden-docref",
+    "status": "current",
+    "type": {
+      "coding": [
+        {
+          "system": "http://loinc.org",
+          "code": "18842-5",
+          "display": "Discharge summary"
+        }
+      ]
+    },
+    "subject": {
+      "reference": "Patient/000000018"
+    },
+    "content": [
+      {
+        "attachment": {
+          "contentType": "text/plain",
+          "language": "he-IL",
+          "size": 9,
+          "title": "Discharge summary",
+          "data": "MDAwMDAwMDE4"
+        }
+      }
+    ]
+  },
+  "canaryLeaks": {
+    "plaintext": true,
+    "numericEntities": false,
+    "base64": true
+  }
+}

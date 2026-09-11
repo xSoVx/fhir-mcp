@@ -1,0 +1,20 @@
+{
+  "resourceType": "Coverage",
+  "id": "golden-coverage",
+  "status": "active",
+  "subscriberId": "000000018",
+  "identifier": [
+    {
+      "system": "http://fhir.health.gov.il/identifier/il-national-id",
+      "value": "000000018"
+    }
+  ],
+  "beneficiary": {
+    "reference": "Patient/000000018"
+  },
+  "payor": [
+    {
+      "reference": "Organization/clalit"
+    }
+  ]
+}

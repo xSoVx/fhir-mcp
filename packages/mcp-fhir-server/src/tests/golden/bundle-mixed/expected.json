@@ -1,0 +1,11 @@
+{
+  "masked": {
+    "resourceType": "Bundle",
+    "id": "golden-bundle"
+  },
+  "canaryLeaks": {
+    "plaintext": false,
+    "numericEntities": false,
+    "base64": false
+  }
+}

@@ -1,13 +1,26 @@
-// Jest setup file for FHIR-MCP server testing
+// Jest setup file for FHIR-MCP server testing.
+//
+// This package is `"type": "module"` and jest.config.js sets
+// `extensionsToTreatAsEsm: ['.ts']`, so this setup file is evaluated as an ES
+// module. Under ESM there is no injected `jest` global -- every jest API must
+// be imported explicitly from '@jest/globals'. Omitting these imports is what
+// caused `ReferenceError: jest is not defined` and made both suites fail to
+// load (0 tests executed).
+import { jest, afterEach, beforeAll, afterAll } from '@jest/globals';
 
-// Mock console methods to reduce noise in tests
-global.console = {
-  ...console,
-  // Uncomment the next line to disable console.log during tests
-  // log: jest.fn(),
-  warn: jest.fn(),
-  error: jest.fn(),
-};
+// Quieten console noise from the code under test.
+//
+// NOTE (important for any test that asserts on logging): we deliberately spy on
+// the existing console methods rather than replacing `global.console` with a
+// new object literal. Replacing the object breaks `jest.spyOn(console, 'warn')`
+// inside a test -- the test would spy on the *replacement*, while the code under
+// test may hold a reference to the original, so the spy silently records
+// nothing. Spying keeps `console` identity stable, so a test-local spy layers
+// on top of this one and observes real calls.
+const silencedConsoleMethods = ['warn', 'error'];
+for (const method of silencedConsoleMethods) {
+  jest.spyOn(console, method).mockImplementation(() => {});
+}
 
 // Setup test environment variables
 process.env.NODE_ENV = 'test';
@@ -17,11 +30,8 @@ process.env.ENABLE_AUDIT = 'true';
 // Global test timeout for async operations
 jest.setTimeout(10000);
 
-// Mock timers if needed
-// jest.useFakeTimers();
-
 // Setup global test utilities
-global.testUtils = {
+globalThis.testUtils = {
   createMockFhirResource: (resourceType, overrides = {}) => ({
     resourceType,
     id: `test-${resourceType.toLowerCase()}-${Date.now()}`,
@@ -31,7 +41,7 @@ global.testUtils = {
     },
     ...overrides
   }),
-  
+
   createMockSecurityContext: (overrides = {}) => ({
     sessionId: `test-session-${Date.now()}`,
     operation: 'fhir.search',
@@ -45,16 +55,15 @@ global.testUtils = {
 
 // Setup test data cleanup
 afterEach(() => {
-  // Clean up any test data or mocks
+  // Clears recorded calls but keeps the console spies installed for the next
+  // test. (jest.restoreAllMocks() would un-silence console.)
   jest.clearAllMocks();
 });
 
 beforeAll(() => {
   // Setup test database or external services if needed
-  console.log('🧪 Setting up test environment...');
 });
 
 afterAll(() => {
   // Cleanup test database or external services if needed
-  console.log('🧹 Cleaning up test environment...');
 });

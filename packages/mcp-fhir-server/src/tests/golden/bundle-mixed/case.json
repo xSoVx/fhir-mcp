@@ -1,0 +1,9 @@
+{
+  "description": "Bundle mixing a Patient and an Observation. Bundle is absent from RESOURCE_PHI_MATRIX so it defaults to RESTRICTED, and the { field: * } rule strips entry[] wholesale. That hides the canary today WITHOUT masking anything -- exactly the kind of accidental pass the corpus is here to make visible.",
+  "path": "engine",
+  "user": "restricted",
+  "mode": "permissive",
+  "surfaces": [
+    "Bundle.entry[].resource"
+  ]
+}

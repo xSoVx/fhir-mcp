@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from '@jest/globals';
+import { describe, test, expect, beforeEach, jest } from '@jest/globals';
 import { InputValidator } from '../security/input-validator.js';
 import { RateLimiter } from '../security/rate-limiter.js';
 import { SecurityHeadersManager } from '../security/security-headers.js';
@@ -400,7 +400,7 @@ describe('Security Integration Tests', () => {
   describe('Audit and Compliance', () => {
     test('should log all security events properly', async () => {
       // Mock console.log to capture audit logs
-      const logSpy = jest.spyOn(console, 'log').mockImplementation();
+      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
 
       const securityContext = {
         userId: 'audit-test-user',

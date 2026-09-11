@@ -1,0 +1,11 @@
+{
+  "masked": {
+    "resourceType": "Coverage",
+    "id": "golden-coverage"
+  },
+  "canaryLeaks": {
+    "plaintext": false,
+    "numericEntities": false,
+    "base64": false
+  }
+}

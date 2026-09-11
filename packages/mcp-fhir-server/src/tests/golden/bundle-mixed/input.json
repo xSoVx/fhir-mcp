@@ -1,0 +1,44 @@
+{
+  "resourceType": "Bundle",
+  "id": "golden-bundle",
+  "type": "searchset",
+  "total": 2,
+  "entry": [
+    {
+      "fullUrl": "urn:uuid:1",
+      "resource": {
+        "resourceType": "Patient",
+        "id": "bp1",
+        "identifier": [
+          {
+            "system": "http://fhir.health.gov.il/identifier/il-national-id",
+            "value": "000000018"
+          }
+        ],
+        "name": [
+          {
+            "family": "Cohen"
+          }
+        ]
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:2",
+      "resource": {
+        "resourceType": "Observation",
+        "id": "bo1",
+        "status": "final",
+        "code": {
+          "coding": [
+            {
+              "code": "718-7"
+            }
+          ]
+        },
+        "subject": {
+          "reference": "Patient/000000018"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "resourceType": "Patient",
+  "id": "golden-ids",
+  "identifier": [
+    {
+      "system": "http://fhir.health.gov.il/identifier/il-national-id",
+      "value": "000000018"
+    },
+    {
+      "value": "000000018"
+    },
+    {
+      "system": "http://fhir.health.gov.il/identifier/il-national-id",
+      "value": "123456782",
+      "assigner": {
+        "display": "Registered under 000000018"
+      }
+    }
+  ],
+  "name": [
+    {
+      "family": "Cohen",
+      "given": [
+        "Tamar"
+      ]
+    }
+  ],
+  "birthDate": "1980-01-01",
+  "gender": "female"
+}

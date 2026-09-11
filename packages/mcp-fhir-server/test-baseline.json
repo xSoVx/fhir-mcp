@@ -1,0 +1,64 @@
+{
+  "$comment": [
+    "Known-failing tests on the PHI remediation baseline (commit d1dcac1).",
+    "",
+    "These are PRE-EXISTING product/test disagreements that were invisible until",
+    "T0.1 repaired the ESM setup and the suite actually executed for the first",
+    "time. They are quarantined here -- not deleted, not skipped -- so that CI can",
+    "gate on the suite from day one while the remediation lanes work.",
+    "",
+    "scripts/check-test-baseline.mjs enforces this list in BOTH directions:",
+    "  * a test that fails and is NOT listed here  -> CI fails (a regression)",
+    "  * a test that is listed here and now PASSES -> CI fails (prune the entry)",
+    "The second direction is what stops this file from silently rotting into a",
+    "blanket suppression.",
+    "",
+    "Each entry names the lane expected to resolve it. Remove the entry in the",
+    "same commit as the fix."
+  ],
+  "recordedAtCommit": "d1dcac1d1d1bdbd9e3091c1362a5aced1fe3ab67",
+  "recordedBy": "lane-a/test-infra (T0.1; floor raised to 70 by T0.2b/T0.3)",
+  "expectedTotalTestsAtLeast": 70,
+  "knownFailures": [
+    {
+      "fullName": "PHI Protection System PHI Classification should classify Organization resource as MINIMAL",
+      "reason": "Fixture Organization carries an identifier; determineFinalPHILevel (phi-classifier.ts:139-141) upgrades MINIMAL -> IDENTIFIABLE on any direct identifier. Expected 'minimal', received 'identifiable'.",
+      "owner": "lane owning phi-classifier.ts (T1.2) -- decide whether the upgrade rule or the test is wrong"
+    },
+    {
+      "fullName": "PHI Protection System PHI Authorization Engine should allow masked access to minimal PHI resources",
+      "reason": "Downstream of the classification upgrade above: the resource is IDENTIFIABLE, so strict mode blocks it and allowed=false.",
+      "owner": "lane owning phi-classifier.ts (T1.2)"
+    },
+    {
+      "fullName": "PHI Protection System Integration Tests should handle mixed resource bundles correctly",
+      "reason": "Downstream of the same upgrade: the Organization entry is blocked, so 1 result is returned instead of 2.",
+      "owner": "lane owning phi-classifier.ts (T1.2)"
+    },
+    {
+      "fullName": "Security Integration Tests Input Validation should sanitize potentially harmful input",
+      "reason": "Pre-existing. Sanitised output still contains the rejected substring.",
+      "owner": "unassigned -- outside the PHI remediation plan; needs its own triage"
+    },
+    {
+      "fullName": "Security Integration Tests Rate Limiting should block excessive requests",
+      "reason": "Pre-existing rate-limiter behaviour disagreement.",
+      "owner": "unassigned -- outside the PHI remediation plan"
+    },
+    {
+      "fullName": "Security Integration Tests Rate Limiting should detect suspicious rapid-fire requests",
+      "reason": "Pre-existing rate-limiter behaviour disagreement.",
+      "owner": "unassigned -- outside the PHI remediation plan"
+    },
+    {
+      "fullName": "Security Integration Tests Security Headers should detect suspicious requests",
+      "reason": "Pre-existing security-headers behaviour disagreement.",
+      "owner": "unassigned -- outside the PHI remediation plan"
+    },
+    {
+      "fullName": "Security Integration Tests Security Middleware Integration should enforce rate limits across middleware",
+      "reason": "Pre-existing; downstream of the rate-limiter failures above.",
+      "owner": "unassigned -- outside the PHI remediation plan"
+    }
+  ]
+}

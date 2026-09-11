@@ -41,5 +41,22 @@ export default {
     }
   },
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
-  testTimeout: 10000
+  testTimeout: 10000,
+
+  // WORKAROUND -- remove once the leak below is fixed.
+  //
+  // PHIAuthorizationEngine's constructor starts an emergency-grant cleanup
+  // timer (phi-authorization-engine.ts:36) and never clears it. The timer is
+  // not .unref()'d, so every engine a test constructs keeps the node event
+  // loop alive and jest reports "Jest did not exit one second after the test
+  // run has completed" / "A worker process has failed to exit gracefully".
+  //
+  // That was invisible while the suite could not load at all. Without
+  // forceExit the run hangs instead of finishing, which would make the CI gate
+  // time out rather than report.
+  //
+  // This is a HARNESS workaround, not a fix. The real fix is to .unref() the
+  // interval or expose a dispose() -- that file belongs to another lane.
+  // Delete this option, and this comment, in the commit that fixes it.
+  forceExit: true
 };
