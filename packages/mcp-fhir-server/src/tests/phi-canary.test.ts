@@ -9,7 +9,9 @@ import {
   kitchenSinkDocumentReference,
   kitchenSinkObservation,
   kitchenSinkPatient,
-  serialise
+  serialise,
+  asArray,
+  asObject
 } from './fixtures/canary.js';
 import {
   clinician,
@@ -200,7 +202,7 @@ describe('PHI canary', () => {
         user: clinician()
       });
       expectMaskingEngineRan(outcome);
-      const masked = outcome.maskedResource as any;
+      const masked = asObject(outcome.maskedResource);
       // The identifier array as a whole is hashed to an opaque string, taking
       // the nested assigner.display with it.
       expect(typeof masked.identifier).toBe('string');
@@ -223,7 +225,7 @@ describe('PHI canary', () => {
         { user: restrictedAccessUser() }
       );
       expectMaskingEngineRan(outcome);
-      const masked = outcome.maskedResource as any;
+      const masked = asObject(outcome.maskedResource);
       expect(masked.identifier).toBeDefined();
       expect(serialise(outcome.maskedResource)).not.toContain(CANARY);
     });
@@ -235,7 +237,7 @@ describe('PHI canary', () => {
         user: clinician()
       });
       expectMaskingEngineRan(outcome);
-      expect(serialise((outcome.maskedResource as any).text)).not.toContain(CANARY);
+      expect(serialise(asObject(outcome.maskedResource).text)).not.toContain(CANARY);
     });
 
     test.failing('does not leak the canary through text.div as numeric character references', async () => {
@@ -257,12 +259,12 @@ describe('PHI canary', () => {
         user: clinician()
       });
       expectMaskingEngineRan(outcome);
-      const contained = (outcome.maskedResource as any).contained;
+      const contained = asObject(outcome.maskedResource).contained;
       // Assert the contained resource SURVIVES and is masked -- not that it
       // was deleted. A rule that drops `contained` wholesale would hide the
       // canary without masking anything, and would still be wrong.
       expect(Array.isArray(contained)).toBe(true);
-      expect(contained[0].resourceType).toBe('RelatedPerson');
+      expect(asObject(asArray(contained)[0]).resourceType).toBe('RelatedPerson');
       expect(serialise(contained)).not.toContain(CANARY);
     });
 
@@ -271,9 +273,9 @@ describe('PHI canary', () => {
         user: clinician()
       });
       expectMaskingEngineRan(outcome);
-      const contained = (outcome.maskedResource as any).contained;
+      const contained = asObject(outcome.maskedResource).contained;
       expect(Array.isArray(contained)).toBe(true);
-      expect(contained[0].resourceType).toBe('Patient');
+      expect(asObject(asArray(contained)[0]).resourceType).toBe('Patient');
       expect(serialise(contained)).not.toContain(CANARY);
     });
   });
@@ -289,7 +291,7 @@ describe('PHI canary', () => {
         user: restrictedAccessUser()
       });
       expectMaskingEngineRan(outcome);
-      const masked = outcome.maskedResource as any;
+      const masked = asObject(outcome.maskedResource);
       expect(Array.isArray(masked.entry)).toBe(true);
       expect(masked.entry).toHaveLength(2);
       expect(serialise(masked.entry)).not.toContain(CANARY);
@@ -338,7 +340,7 @@ describe('PHI canary', () => {
         user: clinician()
       });
       expectMaskingEngineRan(outcome);
-      expect(serialise((outcome.maskedResource as any).link)).not.toContain(CANARY);
+      expect(serialise(asObject(outcome.maskedResource).link)).not.toContain(CANARY);
     });
   });
 
@@ -395,7 +397,7 @@ describe('PHI canary', () => {
         { user: restrictedAccessUser() }
       );
       expectMaskingEngineRan(outcome);
-      const masked = outcome.maskedResource as any;
+      const masked = asObject(outcome.maskedResource);
       expect(masked.entry).toHaveLength(3);
       const blob = serialise(masked);
       for (const form of CANARY_FORMS) {

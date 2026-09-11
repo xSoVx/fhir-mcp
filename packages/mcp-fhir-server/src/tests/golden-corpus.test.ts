@@ -2,7 +2,12 @@ import { describe, test, expect } from '@jest/globals';
 import { readdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CANARY, CANARY_BASE64, CANARY_NUMERIC_ENTITIES } from './fixtures/canary.js';
+import {
+  CANARY,
+  CANARY_BASE64,
+  CANARY_NUMERIC_ENTITIES,
+  type JsonValue
+} from './fixtures/canary.js';
 import {
   clinician,
   expectMaskingEngineRan,
@@ -67,8 +72,8 @@ interface GoldenCase {
   surfaces: string[];
 }
 
-function readJson(file: string): any {
-  return JSON.parse(readFileSync(file, 'utf8'));
+function readJson<T>(file: string): T {
+  return JSON.parse(readFileSync(file, 'utf8')) as T;
 }
 
 /**
@@ -79,15 +84,15 @@ function readJson(file: string): any {
  * serialising it away. Comparing object graphs instead of their JSON would see
  * `undefined` keys that no real consumer ever sees.
  */
-function normalise(value: unknown): any {
-  return JSON.parse(JSON.stringify(value ?? null));
+function normalise(value: unknown): JsonValue {
+  return JSON.parse(JSON.stringify(value ?? null)) as JsonValue;
 }
 
 /**
  * Replace every value that looks like a pseudonym hash with "<<HASH>>", so the
  * corpus is stable across hashing-scheme changes.
  */
-function placeholderiseHashes(value: any): any {
+function placeholderiseHashes(value: JsonValue): JsonValue {
   if (typeof value === 'string') {
     return HASH_SHAPES.some((re) => re.test(value)) ? '<<HASH>>' : value;
   }
@@ -155,8 +160,8 @@ describe('golden corpus', () => {
 
   describe.each(caseNames)('%s', (name) => {
     const dir = join(GOLDEN_DIR, name);
-    const def: GoldenCase = readJson(join(dir, 'case.json'));
-    const input = readJson(join(dir, 'input.json'));
+    const def = readJson<GoldenCase>(join(dir, 'case.json'));
+    const input = readJson<JsonValue>(join(dir, 'input.json'));
     const expectedPath = join(dir, 'expected.json');
 
     test(def.description.split('.')[0], async () => {
@@ -178,7 +183,7 @@ describe('golden corpus', () => {
       }
 
       expect(existsSync(expectedPath)).toBe(true);
-      const expected = readJson(expectedPath);
+      const expected = readJson<{ masked: JsonValue; canaryLeaks: Record<string, boolean> }>(expectedPath);
 
       // Compared separately so a failure says WHICH of the two changed: the
       // masked output, or whether the canary still leaks.

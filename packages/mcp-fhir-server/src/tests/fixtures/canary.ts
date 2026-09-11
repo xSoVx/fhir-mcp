@@ -62,6 +62,42 @@ export const CANARY_FORMS: ReadonlyArray<{ label: string; value: string }> = [
   { label: 'entity-encoded Hebrew name', value: HEBREW_NAME_ENTITIES }
 ];
 
+/**
+ * Minimal JSON types.
+ *
+ * These fixtures and the assertions over them deliberately avoid `any`: the
+ * repo's lint baseline is 0 errors and a fixed warning count, and a test
+ * harness that adds `any` warnings while asserting on type-sensitive masking
+ * behaviour is setting a poor example for the code it guards.
+ */
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+export type JsonObject = { [key: string]: JsonValue };
+
+/** Narrow an unknown to a JSON object, failing loudly if it is not one. */
+export function asObject(value: unknown): JsonObject {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError(
+      `expected a JSON object, got ${Array.isArray(value) ? 'array' : typeof value}`
+    );
+  }
+  return value as JsonObject;
+}
+
+/** Narrow an unknown to a JSON array, failing loudly if it is not one. */
+export function asArray(value: unknown): JsonValue[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError(`expected a JSON array, got ${typeof value}`);
+  }
+  return value as JsonValue[];
+}
+
 const IL_NATIONAL_ID_SYSTEM =
   'http://fhir.health.gov.il/identifier/il-national-id';
 
@@ -70,7 +106,7 @@ const IL_NATIONAL_ID_SYSTEM =
  * structured identifier, narrative (both literal and entity-encoded), a
  * contained Patient, a custom extension, and a self-reference.
  */
-export function kitchenSinkPatient(canary: string = CANARY): any {
+export function kitchenSinkPatient(canary: string = CANARY): JsonObject {
   return {
     resourceType: 'Patient',
     id: 'canary-patient',
@@ -157,7 +193,7 @@ export function kitchenSinkPatient(canary: string = CANARY): any {
  * An Observation whose contained Patient carries the canary, plus the canary in
  * `subject.reference` and in a free-text note.
  */
-export function kitchenSinkObservation(canary: string = CANARY): any {
+export function kitchenSinkObservation(canary: string = CANARY): JsonObject {
   return {
     resourceType: 'Observation',
     id: 'canary-observation',
@@ -182,7 +218,7 @@ export function kitchenSinkObservation(canary: string = CANARY): any {
 }
 
 /** A DocumentReference with the canary base64-encoded inside an attachment. */
-export function kitchenSinkDocumentReference(canary: string = CANARY): any {
+export function kitchenSinkDocumentReference(canary: string = CANARY): JsonObject {
   return {
     resourceType: 'DocumentReference',
     id: 'canary-docref',
@@ -202,7 +238,7 @@ export function kitchenSinkDocumentReference(canary: string = CANARY): any {
 }
 
 /** A Bundle wrapping the Patient and the Observation. */
-export function kitchenSinkBundle(canary: string = CANARY): any {
+export function kitchenSinkBundle(canary: string = CANARY): JsonObject {
   return {
     resourceType: 'Bundle',
     id: 'canary-bundle',

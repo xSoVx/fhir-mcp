@@ -101,7 +101,7 @@ export async function maskViaGuard(
   resource: unknown,
   options: { user?: User; mode?: 'safe' | 'trusted' } = {}
 ): Promise<MaskingOutcome> {
-  // alse disables audit output -- the canary must not be judged by what a
+  // Passing false disables audit output -- the canary must not be judged by what a
   // logger did or did not print, and the engine logs every decision to stdout.
   const auditLogger = new AuditLogger(false);
   const guard = new PhiGuard(
@@ -154,7 +154,7 @@ export async function maskViaEngine(
   resource: unknown,
   options: { user?: User; mode?: PHIProtectionConfig['mode'] } = {}
 ): Promise<MaskingOutcome> {
-  // alse disables audit output -- the canary must not be judged by what a
+  // Passing false disables audit output -- the canary must not be judged by what a
   // logger did or did not print, and the engine logs every decision to stdout.
   const auditLogger = new AuditLogger(false);
   const config: PHIProtectionConfig = {
