@@ -144,6 +144,26 @@ export const RESOURCE_PHI_MATRIX: Record<string, PHILevel> = {
   // RelatedPerson carries the SAME IL-Core national-ID slice as Patient.
   'RelatedPerson': PHILevel.RESTRICTED,
   'Person': PHILevel.RESTRICTED,
+
+  // `Bundle` is a CONTAINER. It has no PHI of its own; everything identifying
+  // inside it lives in `entry[].resource`. It is listed here as RESTRICTED
+  // DELIBERATELY, and the consequence is that the `{ field: '*' }` rule strips
+  // `entry` wholesale before PHIMaskingEngine.maskNested()'s per-entry
+  // recursion can matter.
+  //
+  // That recursion is therefore unreachable through PhiGuard. This was
+  // measured, not assumed: fhir-tools.ts (searchResources) de-structures the
+  // search Bundle itself and submits one `entry.resource` at a time, so no
+  // production caller ever hands PhiGuard a Bundle. Reclassifying Bundle as
+  // IDENTIFIABLE to reach the recursion would therefore restore NO
+  // functionality, while relaxing the fail-closed default for the Bundles that
+  // do arrive by other routes ($everything, transaction responses, a Bundle
+  // nested in contained[]). Keeping the strip is the stronger of two safe
+  // options and the cheaper of two changes.
+  //
+  // The recursion is NOT deleted: it still runs for `contained[]`, and it is
+  // the correct behaviour the moment this line changes. See maskNested().
+  'Bundle': PHILevel.RESTRICTED,
   'Media': PHILevel.RESTRICTED,
   'Binary': PHILevel.RESTRICTED,
   
@@ -290,4 +310,36 @@ export const GLOBAL_ATTACHMENT_MASKING_RULES: readonly MaskingRule[] = [
   { field: 'payload.contentAttachment.data', maskingType: 'remove' },
   { field: 'valueAttachment.data', maskingType: 'remove' },          // Observation.valueAttachment
   { field: 'form.data', maskingType: 'remove' }                      // Claim/Coverage form attachments
+];
+
+/**
+ * `Meta` is present on EVERY resource, sits outside every resource-specific
+ * rule set, and carries three surfaces that nothing in FHIR constrains.
+ *
+ * - `security[].display` and `tag[].display` are the human-readable label on a
+ *   `Coding`. `subject 000000018` is a perfectly legal display string, and
+ *   export pipelines routinely copy the patient banner into one. Both are
+ *   removed. The `system` + `code` pair is left INTACT on purpose: that is the
+ *   machine-readable confidentiality label, and deleting it would tell a
+ *   downstream consumer less about how carefully to handle the resource --
+ *   masking that makes the output look less sensitive than it is.
+ * - `meta.source` is a `uri` naming where the resource came from. Pipelines
+ *   build it from the record they extracted (`.../export/Patient/<id>`), so it
+ *   is removed outright rather than hashed; a provenance URL has no value to a
+ *   de-identified consumer that would justify keeping a handle on it.
+ *
+ * `versionId`, `lastUpdated` and `profile` survive: the first two are server
+ * bookkeeping and the third is a canonical StructureDefinition URL.
+ *
+ * KNOWN RESIDUAL: `meta.tag[].code` is unbound, so a site COULD put an MRN in
+ * it. It is preserved because tags drive real workflow routing and the code is
+ * at least nominally a coded value. If that trade stops being acceptable, drop
+ * the whole `meta.tag` element -- do not widen this list one sub-field at a
+ * time, which is how `meta.security[].display` came to be missed in the first
+ * place.
+ */
+export const GLOBAL_META_MASKING_RULES: readonly MaskingRule[] = [
+  { field: 'meta.security.display', maskingType: 'remove' },
+  { field: 'meta.tag.display', maskingType: 'remove' },
+  { field: 'meta.source', maskingType: 'remove' }
 ];

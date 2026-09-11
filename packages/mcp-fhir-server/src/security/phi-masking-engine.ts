@@ -83,6 +83,22 @@ const DEFAULT_CACHE_MAX_ENTRIES = 50_000;
 const DEFAULT_MAX_NESTING_DEPTH = 20;
 
 /**
+ * The two element names that can hold an `Extension[]` anywhere in FHIR.
+ *
+ * `modifierExtension` is included deliberately. It has exactly the same
+ * free-form `value[x]` payload as `extension`, and differs only in that a
+ * consumer is FORBIDDEN from ignoring it -- which makes leaving it unmasked
+ * strictly worse than leaving `extension` unmasked, not safer.
+ */
+const EXTENSION_ELEMENTS: readonly string[] = ['extension', 'modifierExtension'];
+
+/**
+ * A mutable JSON object. Deliberately NOT `any`: the extension scrubber below
+ * is new code, and the repo's lint baseline is a fixed warning count.
+ */
+type MutableJson = Record<string, unknown>;
+
+/**
  * PHI Masking Engine
  * Applies various masking strategies to protect sensitive health information
  */
@@ -161,6 +177,7 @@ export class PHIMaskingEngine {
     // entries that need masking (finding 5).
 
     const maskedResource = this.deepClone(resource);
+    this.scrubExtensions(maskedResource, new Set<unknown>());
     this.maskNested(maskedResource, 0, new Set<any>());
     this.applyOwnRules(maskedResource, rules);
 
@@ -197,6 +214,17 @@ export class PHIMaskingEngine {
       );
     }
 
+    // REACHABILITY (recorded at lane F, do not delete this branch):
+    // `Bundle` is RESTRICTED in RESOURCE_PHI_MATRIX, so when a Bundle is masked
+    // as the OUTER resource this recursion runs and its result is then thrown
+    // away by the `{ field: '*' }` wildcard in applyOwnRules. That is the
+    // deliberate choice documented on the matrix entry -- fhir-tools.ts never
+    // submits a Bundle to PhiGuard in the first place, so making it reachable
+    // buys nothing and costs the fail-closed default.
+    //
+    // The branch stays because it is NOT dead: it is the correct behaviour the
+    // moment Bundle is reclassified, and it already fires today for any nested
+    // resource inside contained[] that carries an `entry` array of its own.
     if (Array.isArray(resource.entry)) {
       resource.entry = resource.entry.map((entry: any) => {
         if (!entry || typeof entry !== 'object') {
@@ -243,6 +271,98 @@ export class PHIMaskingEngine {
       stub.resourceType = child.resourceType;
     }
     return stub;
+  }
+
+  /**
+   * Structurally redact every `extension` / `modifierExtension` array in the
+   * graph -- at ANY depth, on ANY element, on ANY resource type.
+   *
+   * WHY THIS IS NOT A MASKING RULE
+   * ------------------------------
+   * `MaskingRule.field` is a fixed dot-path. Extensions are the one FHIR
+   * construct with no fixed path: a resource may carry one on itself, on any
+   * backbone element, on any datatype, nested arbitrarily deep inside another
+   * extension, and -- the surface that has no dot-path at all -- on a PRIMITIVE
+   * via its `_field` sibling (`_birthDate.extension[]`). No finite list of
+   * paths covers that, so the guarantee has to be structural or it is not a
+   * guarantee. That is also why this runs unconditionally rather than being
+   * selected per PHI level: a rule you can forget to select is a rule that gets
+   * forgotten.
+   *
+   * WHY A WHITELIST, NOT A LIST OF `value[x]` NAMES
+   * ----------------------------------------------
+   * An extension's payload is `value[x]`, where `[x]` ranges over every FHIR
+   * datatype: `valueString`, `valueIdentifier`, `valueHumanName`,
+   * `valueAddress`, `valueAttachment`, `valueReference` and ~50 more, with new
+   * ones added every release. Enumerating them -- or matching /^value[A-Z]/ --
+   * closes only the shapes someone thought of, and closes nothing at all for a
+   * non-conformant extension that hangs PHI off some other key.
+   *
+   * So each extension is REBUILT from a whitelist rather than filtered by a
+   * blacklist. `url` survives, so the consumer is still told WHICH extension was
+   * present -- the same bargain Attachment.data strikes with contentType. Nested
+   * `extension` arrays are recursed into. Every other key, conformant value[x]
+   * or not, is dropped. A choice type that does not exist yet is already
+   * handled.
+   */
+  private scrubExtensions(node: unknown, seen: Set<unknown>): void {
+    if (!node || typeof node !== 'object' || seen.has(node)) {
+      return;
+    }
+    // Visited-once, never un-marked: deepClone preserves shared references, so
+    // a node reachable twice has already been scrubbed the first time. This
+    // also terminates on the cyclic graphs deepClone is built to survive.
+    seen.add(node);
+
+    if (Array.isArray(node)) {
+      node.forEach(item => this.scrubExtensions(item, seen));
+      return;
+    }
+
+    const record = node as MutableJson;
+    for (const key of Object.keys(record)) {
+      if (EXTENSION_ELEMENTS.includes(key)) {
+        record[key] = this.redactExtensionArray(record[key], 1);
+        continue;
+      }
+      this.scrubExtensions(record[key], seen);
+    }
+  }
+
+  /** Rebuild an `Extension[]`. Anything that is not one is dropped, not kept. */
+  private redactExtensionArray(
+    value: unknown,
+    depth: number
+  ): MutableJson[] | undefined {
+    if (!Array.isArray(value) || depth > this.maxNestingDepth) {
+      return undefined;
+    }
+    // Entries that are not extensions at all are DROPPED, not kept as holes.
+    return value
+      .map(extension => this.redactExtension(extension, depth))
+      .filter((extension): extension is MutableJson => extension !== undefined);
+  }
+
+  /** Rebuild ONE extension from `{ url, extension, modifierExtension }`. */
+  private redactExtension(extension: unknown, depth: number): MutableJson | undefined {
+    if (!extension || typeof extension !== 'object' || Array.isArray(extension)) {
+      return undefined;
+    }
+
+    const source = extension as MutableJson;
+    const kept: MutableJson = {};
+    if (typeof source.url === 'string') {
+      kept.url = source.url;
+    }
+    for (const element of EXTENSION_ELEMENTS) {
+      if (Object.prototype.hasOwnProperty.call(source, element)) {
+        const nested = this.redactExtensionArray(source[element], depth + 1);
+        if (nested !== undefined) {
+          kept[element] = nested;
+        }
+      }
+    }
+    return kept;
   }
 
   private resolveNestedRules(child: any): MaskingRule[] {

@@ -234,12 +234,23 @@ describe('PHI canary', () => {
       expect(serialise(masked.identifier)).not.toContain(CANARY);
     });
 
-    test.failing('a resource type absent from the classifier switch masks its identifier', async () => {
-      // RelatedPerson has no `case` in getResourceSpecificMaskingRules and is
-      // absent from RESOURCE_PHI_MATRIX, so it defaults to RESTRICTED
-      // (phi-classifier.ts:34). Flips when T1.2 makes `identifier` a global
-      // ALWAYS rule rather than per-type enumeration -- and the assertion is
-      // written so that merely stripping every field does not satisfy it.
+    test('a resource type absent from the classifier switch REMOVES its identifier', async () => {
+      // CORRECTED AT LANE F -- this was a wrong expectation, not a leak.
+      //
+      // The case was written expecting a pseudonym TOKEN, on the theory that an
+      // unenumerated type falls through to the global `identifier` hash rule. It
+      // does not, and what it actually gets is STRONGER: an absent type defaults
+      // to RESTRICTED, whose only rule is { field: '*', maskingType: 'remove' },
+      // and that wildcard DELETES every field instead of hashing any of them. A
+      // token is a handle that survives into the output; deletion leaves nothing
+      // to hold. Asserting the token would have pinned the WEAKER of the two
+      // outcomes, and a later regression from `remove` to `hash` would have read
+      // as a pass.
+      //
+      // RelatedPerson is now listed explicitly in RESOURCE_PHI_MATRIX, so its
+      // level no longer depends on the `|| RESTRICTED` fallthrough -- but the
+      // assertion below is about what the WILDCARD does, and holds for any type
+      // that reaches RESTRICTED by either route.
       const outcome = await maskViaEngine(
         {
           resourceType: 'RelatedPerson',
@@ -251,7 +262,15 @@ describe('PHI canary', () => {
       );
       expectMaskingEngineRan(outcome);
       const masked = asObject(outcome.maskedResource);
-      expect(masked.identifier).toBeDefined();
+
+      // Non-vacuity: proven by what SURVIVES the wildcard, not by what is
+      // missing. An empty or absent result would fail these two lines.
+      expect(masked.resourceType).toBe('RelatedPerson');
+      expect(Object.keys(masked).sort()).toEqual(['id', 'resourceType']);
+
+      // The correction itself: removed, not tokenised.
+      expect(masked.identifier).toBeUndefined();
+
       expect(serialise(outcome.maskedResource)).not.toContain(CANARY);
     });
   });
@@ -307,20 +326,38 @@ describe('PHI canary', () => {
   });
 
   describe('surface: Bundle.entry[].resource [owner: T2.3]', () => {
-    test.failing('masks each Bundle entry by its own resource type', async () => {
-      // Bundle is absent from RESOURCE_PHI_MATRIX -> defaults to RESTRICTED ->
-      // the { field: '*' } rule strips `entry` wholesale, which happens to
-      // hide the canary today. This case asserts the entries are MASKED, not
-      // that the Bundle was emptied, so it stays honest once T2.3 recurses
-      // properly and entries survive.
+    test('strips Bundle.entry wholesale instead of masking entries in place', async () => {
+      // DECIDED AT LANE F. Read the RESOURCE_PHI_MATRIX entry for 'Bundle'
+      // before changing this.
+      //
+      // The original expectation -- entries survive, each masked by its own
+      // resourceType -- describes what PHIMaskingEngine.maskNested() does, and
+      // maskNested() genuinely does run here. Its output is then discarded by
+      // the RESTRICTED wildcard, which deletes `entry` outright.
+      //
+      // That is kept deliberately. fhir-tools.ts de-structures the search Bundle
+      // and submits one entry.resource at a time, so no production caller passes
+      // a Bundle to PhiGuard; making the recursion reachable would restore no
+      // functionality while downgrading Bundle from RESTRICTED to IDENTIFIABLE.
+      // The assertion is therefore rewritten to pin the behaviour that exists
+      // rather than the one the fixture author expected. If Bundle is ever
+      // reclassified, this test must go back to the per-entry form -- that is
+      // the trade, stated where someone will read it.
       const outcome = await maskViaEngine(kitchenSinkBundle(), {
         user: restrictedAccessUser()
       });
       expectMaskingEngineRan(outcome);
       const masked = asObject(outcome.maskedResource);
-      expect(Array.isArray(masked.entry)).toBe(true);
-      expect(masked.entry).toHaveLength(2);
-      expect(serialise(masked.entry)).not.toContain(CANARY);
+
+      // Non-vacuity, from both ends. The wildcard ran on a BUNDLE...
+      expect(masked.resourceType).toBe('Bundle');
+      expect(Object.keys(masked).sort()).toEqual(['id', 'resourceType']);
+      expect(masked.entry).toBeUndefined();
+      // ...and the fixture really did carry entries in, so the emptiness above
+      // is the masking pass rather than a hollow fixture.
+      expect(asArray(kitchenSinkBundle().entry)).toHaveLength(2);
+
+      expect(serialise(outcome.maskedResource)).not.toContain(CANARY);
     });
   });
 
@@ -340,10 +377,12 @@ describe('PHI canary', () => {
   });
 
   describe('surface: extension[] [owner: UNASSIGNED]', () => {
-    test.failing('does not leak the canary through a custom extension, at any nesting depth', async () => {
-      // No finding in the source review named this surface, and no task in the
-      // plan claims it. It is here because an unclaimed surface is exactly
-      // what a canary exists to find. Whoever picks it up owns this flip.
+    test('does not leak the canary through a custom extension, at any nesting depth', async () => {
+      // CLOSED AT LANE F. No finding in the source review named this surface; it
+      // is here because an unclaimed surface is exactly what a canary exists to
+      // find. PHIMaskingEngine.scrubExtensions() now rebuilds every extension
+      // from a { url, extension } whitelist at any depth, so every value[x] goes
+      // -- not merely the valueString this fixture happens to use.
       const outcome = await maskViaEngine(
         {
           resourceType: 'Patient',
@@ -353,7 +392,76 @@ describe('PHI canary', () => {
         { user: clinician() }
       );
       expectMaskingEngineRan(outcome);
+      const masked = asObject(outcome.maskedResource);
+
+      // Non-vacuity: the extensions were not simply deleted. Both url markers
+      // survive, at the top level and one level down, so the assertion below is
+      // about the VALUES being gone rather than the element being absent.
+      const extensions = asArray(masked.extension);
+      expect(extensions).toHaveLength(2);
+      expect(asObject(extensions[0]).url).toBe(
+        'http://example.org/StructureDefinition/legacy-mrn'
+      );
+      expect(asObject(extensions[0]).valueString).toBeUndefined();
+      const nested = asArray(asObject(extensions[1]).extension);
+      expect(nested).toHaveLength(1);
+      expect(asObject(nested[0]).url).toBe('inner');
+      expect(asObject(nested[0]).valueString).toBeUndefined();
+
       expect(serialise(outcome.maskedResource)).not.toContain(CANARY);
+    });
+
+    test('redacts every value[x] type, modifierExtension, and primitive extensions', async () => {
+      // The fixture above uses valueString because a fixture has to pick one.
+      // The RULE is not about valueString: it is that nothing but `url` and a
+      // nested `extension` survives. These are the shapes the fixture does not
+      // cover -- complex choice types, a modifierExtension, a non-conformant
+      // extension that a value[x] blacklist would walk straight past, and an
+      // extension hanging off a PRIMITIVE via its `_field` sibling, which has no
+      // dot-path a MaskingRule could ever name.
+      const outcome = await maskViaEngine(
+        {
+          resourceType: 'Patient',
+          id: 'ext-general',
+          extension: [
+            { url: 'http://example.org/x1', valueIdentifier: { value: CANARY } },
+            { url: 'http://example.org/x2', valueHumanName: { family: CANARY } },
+            { url: 'http://example.org/x3', valueAddress: { line: [CANARY] } },
+            { url: 'http://example.org/x4', valueAttachment: { data: CANARY_BASE64 } },
+            {
+              url: 'http://example.org/x5',
+              valueReference: { reference: `Patient/${CANARY}` }
+            },
+            { url: 'http://example.org/x6', somethingElseEntirely: CANARY }
+          ],
+          modifierExtension: [
+            { url: 'http://example.org/m1', valueString: CANARY }
+          ],
+          _birthDate: {
+            extension: [{ url: 'http://example.org/b1', valueString: CANARY }]
+          }
+        },
+        { user: clinician() }
+      );
+      expectMaskingEngineRan(outcome);
+      const masked = asObject(outcome.maskedResource);
+
+      // Non-vacuity: all three carriers survive as structure, so the absence
+      // asserted below is redaction and not deletion.
+      expect(asArray(masked.extension)).toHaveLength(6);
+      expect(asArray(masked.modifierExtension)).toHaveLength(1);
+      expect(asArray(asObject(masked._birthDate).extension)).toHaveLength(1);
+      for (const extension of asArray(masked.extension)) {
+        expect(Object.keys(asObject(extension))).toEqual(['url']);
+      }
+
+      const blob = serialise(outcome.maskedResource);
+      for (const form of CANARY_FORMS) {
+        expect({ form: form.label, leaked: blob.includes(form.value) }).toEqual({
+          form: form.label,
+          leaked: false
+        });
+      }
     });
   });
 
@@ -371,8 +479,10 @@ describe('PHI canary', () => {
   });
 
   describe('surface: meta.security [owner: UNASSIGNED]', () => {
-    test.failing('does not leak the canary through a meta.security tag display', async () => {
-      // Another surface no finding named.
+    test('does not leak the canary through a meta.security tag display', async () => {
+      // CLOSED AT LANE F. Another surface no finding named. Covered as an
+      // ELEMENT rather than as one field: GLOBAL_META_MASKING_RULES drops
+      // meta.security[].display, meta.tag[].display and meta.source.
       const outcome = await maskViaEngine(
         {
           resourceType: 'Patient',
@@ -382,6 +492,63 @@ describe('PHI canary', () => {
         { user: clinician() }
       );
       expectMaskingEngineRan(outcome);
+      const masked = asObject(outcome.maskedResource);
+
+      // Non-vacuity: `meta` survives and so does the CODED security label --
+      // only the free text is gone. A rule that deleted `meta` wholesale would
+      // hide the canary while telling the consumer LESS about how to handle the
+      // resource, which is the wrong direction for a confidentiality label.
+      const meta = asObject(masked.meta);
+      expect(meta.versionId).toBe('1');
+      const security = asArray(meta.security);
+      expect(security).toHaveLength(1);
+      expect(asObject(security[0]).code).toBe('restricted');
+      expect(asObject(security[0]).display).toBeUndefined();
+
+      expect(serialise(outcome.maskedResource)).not.toContain(CANARY);
+    });
+
+    test('covers the whole meta element: tag display and source, not just security', async () => {
+      const outcome = await maskViaEngine(
+        {
+          resourceType: 'Patient',
+          id: 'meta-general',
+          meta: {
+            versionId: '4',
+            lastUpdated: '2024-01-01T00:00:00Z',
+            source: `http://example.org/export/Patient/${CANARY}`,
+            profile: [
+              'http://fhir.health.gov.il/StructureDefinition/il-core-patient'
+            ],
+            security: [
+              { system: 'http://example.org/labels', code: 'R', display: CANARY }
+            ],
+            tag: [
+              {
+                system: 'http://example.org/tags',
+                code: 'batch-7',
+                display: `MRN ${CANARY}`
+              }
+            ]
+          }
+        },
+        { user: clinician() }
+      );
+      expectMaskingEngineRan(outcome);
+      const meta = asObject(asObject(outcome.maskedResource).meta);
+
+      // Kept: server bookkeeping, the canonical profile URL, and the
+      // machine-readable half of both Codings.
+      expect(meta.versionId).toBe('4');
+      expect(asArray(meta.profile)).toHaveLength(1);
+      expect(asObject(asArray(meta.security)[0]).code).toBe('R');
+      expect(asObject(asArray(meta.tag)[0]).code).toBe('batch-7');
+
+      // Gone: every free-text surface on the element.
+      expect(asObject(asArray(meta.security)[0]).display).toBeUndefined();
+      expect(asObject(asArray(meta.tag)[0]).display).toBeUndefined();
+      expect(meta.source).toBeUndefined();
+
       expect(serialise(outcome.maskedResource)).not.toContain(CANARY);
     });
   });

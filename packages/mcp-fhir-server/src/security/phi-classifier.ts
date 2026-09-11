@@ -8,6 +8,7 @@ import {
   GLOBAL_IDENTIFIER_MASKING_RULES,
   GLOBAL_NARRATIVE_MASKING_RULES,
   GLOBAL_ATTACHMENT_MASKING_RULES,
+  GLOBAL_META_MASKING_RULES,
   NarrativePolicy,
   PHIClassifierOptions
 } from '../types/phi-types.js';
@@ -307,7 +308,8 @@ export class PHIClassifier {
     return [
       ...GLOBAL_IDENTIFIER_MASKING_RULES,
       ...this.getNarrativeMaskingRules(resource),
-      ...GLOBAL_ATTACHMENT_MASKING_RULES
+      ...GLOBAL_ATTACHMENT_MASKING_RULES,
+      ...GLOBAL_META_MASKING_RULES
     ];
   }
 
