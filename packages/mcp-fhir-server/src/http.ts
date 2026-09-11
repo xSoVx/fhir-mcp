@@ -10,7 +10,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { FhirProvider } from './providers/fhir-provider.js';
 import { TerminologyProvider } from './providers/terminology-provider.js';
-import { PhiGuard } from './security/phi-guard.js';
+import { PhiGuard, parsePhiGuardMode } from './security/phi-guard.js';
 import { AuditLogger } from './security/audit-logger.js';
 import { SecurityMiddleware } from './security/security-middleware.js';
 import { FhirTools } from './tools/fhir-tools.js';
@@ -41,7 +41,10 @@ class FhirMcpServer {
         bearerToken: process.env.TERMINOLOGY_TOKEN
       },
       security: {
-        phiMode: (process.env.PHI_MODE as 'safe' | 'trusted') || 'safe',
+        // Parsed, not cast. An unchecked cast let PHI_MODE='Safe' (or any typo,
+        // or an env var set to '') resolve to a weaker engine mode at runtime.
+        // parsePhiGuardMode throws instead, so the process fails at startup.
+        phiMode: parsePhiGuardMode(process.env.PHI_MODE ?? 'safe', 'process.env.PHI_MODE'),
         enableAudit: process.env.ENABLE_AUDIT !== 'false'
       }
     };

@@ -4,80 +4,150 @@ import { PHIAuthorizationEngine } from './phi-authorization-engine.js';
 import { User, PHIProtectionConfig } from '../types/phi-types.js';
 import { AuditLogger } from './audit-logger.js';
 
+/**
+ * The complete set of PHI guard modes accepted as *input* configuration.
+ *
+ * This is deliberately exhaustive and closed. A DLP control must fail at
+ * startup on an unrecognised mode rather than silently degrade at runtime,
+ * so there is no "default" branch anywhere in this module.
+ */
+export const PHI_GUARD_MODES = ['safe', 'trusted'] as const;
+export type PhiGuardMode = (typeof PHI_GUARD_MODES)[number];
+
+/**
+ * Engine mode resolution.
+ *
+ * Note that neither entry maps to 'permissive'. 'permissive' is the only
+ * engine mode that returns *masked but still identifiable* resources, and it
+ * is intentionally unreachable from any valid PhiGuardConfig. 'trusted'
+ * disables the engine outright (enabled: false), but its engine mode is still
+ * pinned to the strictest value so that flipping `enabled` can never widen
+ * access as a side effect.
+ */
+const ENGINE_MODE_BY_GUARD_MODE: Readonly<Record<PhiGuardMode, PHIProtectionConfig['mode']>> = {
+  safe: 'strict',
+  trusted: 'strict'
+};
+
+/**
+ * Parse and validate a PHI guard mode, throwing on anything unrecognised.
+ *
+ * Accepts `unknown` on purpose: the common real-world failure is an unchecked
+ * cast of an env var (`process.env.PHI_MODE as 'safe' | 'trusted'`), where the
+ * value may be `undefined`, `''`, or a case variant such as `'Safe'`. Every
+ * one of those must be a startup error, never a quiet fallback.
+ */
+export function parsePhiGuardMode(value: unknown, source = 'config.mode'): PhiGuardMode {
+  if (typeof value === 'string' && (PHI_GUARD_MODES as readonly string[]).includes(value)) {
+    return value as PhiGuardMode;
+  }
+
+  throw new Error(
+    `phi-guard: unrecognised mode ${JSON.stringify(value)} (from ${source}). ` +
+    `Use one of: ${PHI_GUARD_MODES.join(' | ')}. ` +
+    `PHI protection refuses to start rather than fall back to a weaker mode.`
+  );
+}
+
 export class PhiGuard {
   private config: PhiGuardConfig;
-  private phiAuthEngine?: PHIAuthorizationEngine;
+  private readonly auditLogger: AuditLogger;
+  private readonly phiAuthEngine: PHIAuthorizationEngine;
 
-  constructor(config: PhiGuardConfig, auditLogger?: AuditLogger) {
-    this.config = config;
-    
-    // Initialize PHI authorization engine if audit logger provided
-    if (auditLogger) {
-      const phiConfig: PHIProtectionConfig = {
-        enabled: config.mode !== 'trusted',
-        mode: config.mode === 'safe' ? 'strict' : 'permissive',
-        allowEmergencyAccess: true,
-        emergencyAccessDurationMinutes: 30,
-        auditAllAccess: true,
-        defaultMaskingRules: [],
-        resourceOverrides: {}
-      };
-      
-      this.phiAuthEngine = new PHIAuthorizationEngine(phiConfig, auditLogger);
+  /** The engine mode this guard actually resolved to. Exposed for assertions. */
+  public readonly engineMode: PHIProtectionConfig['mode'];
+  /** Whether the PHI authorization engine is enabled. Exposed for assertions. */
+  public readonly engineEnabled: boolean;
+
+  constructor(config: PhiGuardConfig, auditLogger: AuditLogger) {
+    // Fail closed: without an audit logger there is no accountable record of
+    // PHI access, so the guard must not exist at all. Previously the logger
+    // was optional and omitting it silently skipped the authorization engine.
+    if (!auditLogger) {
+      throw new Error(
+        'phi-guard: an AuditLogger is required. PHI masking will not run without ' +
+        'an accountable audit sink.'
+      );
     }
+
+    const mode = parsePhiGuardMode(config?.mode);
+
+    this.auditLogger = auditLogger;
+    this.config = { ...config, mode };
+    this.engineEnabled = mode !== 'trusted';
+    this.engineMode = ENGINE_MODE_BY_GUARD_MODE[mode];
+
+    const phiConfig: PHIProtectionConfig = {
+      enabled: this.engineEnabled,
+      mode: this.engineMode,
+      allowEmergencyAccess: true,
+      emergencyAccessDurationMinutes: 30,
+      auditAllAccess: true,
+      defaultMaskingRules: [],
+      resourceOverrides: {}
+    };
+
+    // Unconditional: the engine is always constructed, so there is no
+    // legacy fall-through path.
+    this.phiAuthEngine = new PHIAuthorizationEngine(phiConfig, auditLogger);
   }
 
   /**
-   * Enhanced authorization check using PHI engine
+   * Enhanced authorization check using PHI engine.
+   *
+   * Always routes through the authorization engine. The previous legacy
+   * `maskResource()` fall-through has been removed: it was only reachable when
+   * the engine was absent, which can no longer happen.
    */
   async authorizeAndMaskResource(
-    resource: FhirResource, 
+    resource: FhirResource,
     user?: User,
     operation: string = 'read',
     sessionId: string = 'unknown'
   ): Promise<{ authorized: boolean; maskedResource?: FhirResource; reason?: string }> {
-    
-    // Use new PHI authorization engine if available
-    if (this.phiAuthEngine) {
-      try {
-        const authResult = await this.phiAuthEngine.authorizeResourceAccess(
-          user, 
-          resource, 
-          operation, 
-          sessionId
-        );
 
-        if (!authResult.allowed) {
-          return {
-            authorized: false,
-            reason: authResult.message || authResult.reason
-          };
-        }
+    try {
+      const authResult = await this.phiAuthEngine.authorizeResourceAccess(
+        user,
+        resource,
+        operation,
+        sessionId
+      );
 
-        // Apply masking if required
-        let maskedResource = resource;
-        if (authResult.requiresMasking) {
-          maskedResource = this.phiAuthEngine.applyMasking(resource, authResult);
-        }
-
-        return {
-          authorized: true,
-          maskedResource
-        };
-
-      } catch (error) {
+      if (!authResult.allowed) {
         return {
           authorized: false,
-          reason: error instanceof Error ? error.message : 'PHI authorization failed'
+          reason: authResult.message || authResult.reason
         };
       }
-    }
 
-    // Fallback to legacy masking
-    return {
-      authorized: true,
-      maskedResource: this.maskResource(resource)
-    };
+      // Apply masking if required
+      let maskedResource = resource;
+      if (authResult.requiresMasking) {
+        maskedResource = this.phiAuthEngine.applyMasking(resource, authResult);
+      }
+
+      return {
+        authorized: true,
+        maskedResource
+      };
+
+    } catch (error) {
+      // Fail closed, and scrub. The thrown object routinely carries the
+      // offending resource, directly or in a stack frame, and `reason` is
+      // surfaced to the caller verbatim. Record only the failure class.
+      this.auditLogger.logMaskingFailure({
+        resourceType: resource?.resourceType,
+        resourceId: resource?.id,
+        errorName: error instanceof Error ? error.name : 'unknown',
+        stage: 'authorize'
+      });
+
+      return {
+        authorized: false,
+        reason: 'PHI_AUTHORIZATION_FAILED'
+      };
+    }
   }
 
   maskResource(resource: FhirResource): FhirResource {
