@@ -348,6 +348,17 @@ export class PHIAuthorizationEngine {
     classification: PHIClassificationResult
   ): PHIAccessDecision {
 
+    // A configuration whose mode cannot be interpreted has no defined security
+    // posture. Deny everything except genuinely non-PHI resources, rather than
+    // falling through to whichever branch happens to come next.
+    if (classification.phiLevel !== PHILevel.NONE && resolveEngineMode(this.config.mode) === null) {
+      return denyAccess(
+        'UNRECOGNISED_PHI_MODE',
+        `Unrecognised PHI protection mode "${String(this.config.mode)}"; ` +
+          `expected one of: ${ENGINE_MODES.join(' | ')}`
+      );
+    }
+
     switch (classification.phiLevel) {
       case PHILevel.NONE:
         // Always allow access to non-PHI resources
