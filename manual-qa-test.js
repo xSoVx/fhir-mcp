@@ -157,7 +157,11 @@ class ManualQATester {
     
     // Test safe mode masking
     const PhiGuard = require('./packages/mcp-fhir-server/dist/security/phi-guard.js').PhiGuard;
-    const guard = new PhiGuard({ mode: 'safe', maskFields: [], removeFields: [] });
+    // PhiGuard now requires an AuditLogger: omitting it used to silently skip
+    // the PHI authorization engine, so the parameter is no longer optional.
+    const AuditLogger = require('./packages/mcp-fhir-server/dist/security/audit-logger.js').AuditLogger;
+    const qaAuditLogger = new AuditLogger(false); // QA harness: no audit noise
+    const guard = new PhiGuard({ mode: 'safe', maskFields: [], removeFields: [] }, qaAuditLogger);
     
     try {
       const maskedResource = guard.maskResource(testResource);
@@ -187,7 +191,7 @@ class ManualQATester {
     
     // Test trusted mode (should not mask)
     try {
-      const trustedGuard = new PhiGuard({ mode: 'trusted', maskFields: [], removeFields: [] });
+      const trustedGuard = new PhiGuard({ mode: 'trusted', maskFields: [], removeFields: [] }, qaAuditLogger);
       const unmaskedResource = trustedGuard.maskResource(testResource);
       
       const shouldNotBeMasked = unmaskedResource.name[0].given[0] === 'John';
