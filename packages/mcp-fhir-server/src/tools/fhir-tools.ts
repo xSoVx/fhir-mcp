@@ -223,8 +223,15 @@ export class FhirTools {
         input.sort
       );
 
-      // Apply PHI protection with enhanced authorization
+      // Apply PHI protection with enhanced authorization.
+      //
+      // Control flow here is deliberately fail-closed: if authorization or
+      // masking throws, nothing is pushed to maskedEntries, so the *unmasked*
+      // resource is dropped rather than returned. That behaviour is preserved.
+      // What is added is visibility - suppressedCount - so the caller can tell
+      // results were withheld instead of silently receiving a short list.
       const maskedEntries = [];
+      let suppressedCount = 0;
       if (bundle.entry) {
         for (const entry of bundle.entry) {
           if (entry.resource) {
@@ -241,11 +248,21 @@ export class FhirTools {
                   ...entry,
                   resource: authResult.maskedResource
                 });
+              } else {
+                // Withheld by policy - counted, never logged with the payload.
+                suppressedCount++;
               }
-              // Skip unauthorized resources silently
             } catch (error) {
-              // Log error but continue processing other entries
-              console.warn('PHI authorization error:', error);
+              // Record the failure CLASS only. The thrown object frequently
+              // carries the offending resource (directly or in a stack frame),
+              // so it must never reach console.* or any log shipper.
+              suppressedCount++;
+              this.auditLogger.logMaskingFailure({
+                resourceType: entry.resource?.resourceType,
+                resourceId: entry.resource?.id,
+                errorName: error instanceof Error ? error.name : 'unknown',
+                stage: 'search'
+              });
             }
           }
         }
@@ -253,6 +270,8 @@ export class FhirTools {
 
       const result = {
         total: bundle.total,
+        returned: maskedEntries.length,
+        suppressedCount,
         entries: maskedEntries.map(entry => ({
           id: entry.resource?.id,
           resource: entry.resource
@@ -262,6 +281,7 @@ export class FhirTools {
 
       this.auditLogger.logFhirOperation('search', input.resourceType, undefined, true, undefined, {
         resultCount: maskedEntries.length,
+        suppressedCount,
         params: input.params
       });
 
