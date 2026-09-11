@@ -17,8 +17,8 @@
     "same commit as the fix."
   ],
   "recordedAtCommit": "d1dcac1d1d1bdbd9e3091c1362a5aced1fe3ab67",
-  "recordedBy": "lane-a/test-infra (T0.1)",
-  "expectedTotalTestsAtLeast": 41,
+  "recordedBy": "lane-a/test-infra (T0.1; floor raised to 70 by T0.2b/T0.3)",
+  "expectedTotalTestsAtLeast": 70,
   "knownFailures": [
     {
       "fullName": "PHI Protection System PHI Classification should classify Organization resource as MINIMAL",

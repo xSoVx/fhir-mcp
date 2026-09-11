@@ -1,0 +1,10 @@
+{
+  "description": "Coverage is RESTRICTED, and handleRestrictedResource is the ONE authorization path that actually sets requiresMasking end-to-end. Routed through PhiGuard rather than the engine so the corpus covers the public API too. Coverage.subscriberId is a plain string that in Israeli payer data very often IS the national ID.",
+  "path": "guard",
+  "user": "restricted",
+  "mode": "safe",
+  "surfaces": [
+    "identifier",
+    "subscriberId"
+  ]
+}

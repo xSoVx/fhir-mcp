@@ -1,0 +1,9 @@
+{
+  "description": "Patient carrying the IL national ID in a systemed identifier, a system-less identifier, and a nested assigner.display. The system-less one is the legacy applySafeguards() blind spot: that path filters identifiers by matching ssn/social/government/national against system, so an identifier with no system walks through untouched.",
+  "path": "engine",
+  "user": "clinician",
+  "mode": "permissive",
+  "surfaces": [
+    "identifier"
+  ]
+}

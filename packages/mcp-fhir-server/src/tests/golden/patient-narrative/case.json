@@ -1,0 +1,10 @@
+{
+  "description": "Patient with a populated text.div narrative -- the IL-Core canonical example shape. Carries the canary twice: as literal digits and as XHTML numeric character references, plus an entity-encoded Hebrew family name. A scrubber that regexes the RAW string catches the first and misses the other two.",
+  "path": "engine",
+  "user": "clinician",
+  "mode": "permissive",
+  "surfaces": [
+    "text.div",
+    "identifier"
+  ]
+}

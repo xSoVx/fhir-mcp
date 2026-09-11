@@ -1,0 +1,14 @@
+{
+  "masked": {
+    "resourceType": "Patient",
+    "id": "golden-ids",
+    "identifier": "<<HASH>>",
+    "name": "***",
+    "gender": "female"
+  },
+  "canaryLeaks": {
+    "plaintext": false,
+    "numericEntities": false,
+    "base64": false
+  }
+}

@@ -16,6 +16,7 @@
     "test:watch": "node ./scripts/run-jest.mjs --watch",
     "test:coverage": "node ./scripts/run-jest.mjs --coverage",
     "test:gate": "node ./scripts/check-test-baseline.mjs",
+    "golden:update": "node ./scripts/update-golden.mjs",
     "test:http": "node src/test-http-integration.js",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",

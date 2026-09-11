@@ -1,0 +1,10 @@
+{
+  "description": "DocumentReference with a base64 attachment. The blob decodes to the canary, so the plaintext appears nowhere and an assertion on the plaintext alone would pass vacuously. contentType/size/title must survive any fix -- the model can be told a document exists without receiving it.",
+  "path": "engine",
+  "user": "clinician",
+  "mode": "permissive",
+  "surfaces": [
+    "Attachment.data",
+    "subject.reference"
+  ]
+}
