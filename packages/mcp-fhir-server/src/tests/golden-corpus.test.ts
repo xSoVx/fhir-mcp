@@ -150,7 +150,7 @@ describe('golden corpus', () => {
     // checked-in JSON file; nothing here resolves a host.
     for (const name of caseNames) {
       const raw = readFileSync(join(GOLDEN_DIR, name, 'input.json'), 'utf8');
-      // Reference *identifiers* like "Patient/000000018" are fine; a URL that
+      // Reference *identifiers* like "Patient/<id>" are fine; a URL that
       // would be dereferenced is not. The only http(s) strings permitted are
       // FHIR system/canonical URIs, which are opaque identifiers, never
       // fetched.

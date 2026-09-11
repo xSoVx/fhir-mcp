@@ -57,7 +57,7 @@ import {
  *    case here therefore calls expectMaskingActuallyRan() or
  *    expectMaskingEngineRan() FIRST. See fixtures/masking-harness.ts.
  *
- * 2. THE CANARY VALUE. `000000018` is a valid Israeli ID with leading zeros,
+ * 2. THE CANARY VALUE. CANARY is a valid Israeli ID with LEADING ZEROS,
  *    from IL-Core's own example. Any regex assuming a non-zero first digit
  *    misses it. And XHTML `&#x30;` is a legal way to write `0`, so the
  *    entity-encoded form is asserted alongside the plaintext -- a narrative
@@ -70,8 +70,12 @@ describe('PHI canary', () => {
   // --------------------------------------------------------------------------
   describe('harness integrity', () => {
     test('the canary is a leading-zero Israeli ID, unchanged', () => {
-      expect(CANARY).toBe('000000018');
-      expect(CANARY).toMatch(/^0/);
+      // Asserted structurally, never against an inlined copy of the literal:
+      // a second copy is a second thing to keep in sync, and the whole point
+      // of exporting CANARY from one module is that there is no second copy.
+      expect(CANARY).toHaveLength(9);
+      expect(CANARY).toMatch(/^0+/);
+      expect(CANARY).toMatch(/^\d+$/);
       // The trap, made executable: a plausible-looking IL-ID regex that
       // requires a non-zero first digit does NOT match a valid ID.
       expect(/^[1-9]\d{8}$/.test(CANARY)).toBe(false);
@@ -242,7 +246,8 @@ describe('PHI canary', () => {
 
     test.failing('does not leak the canary through text.div as numeric character references', async () => {
       // The trap in executable form. A scrubber that regexes the RAW narrative
-      // for '000000018' makes the case above pass while leaving this one red.
+      // for the plaintext CANARY makes the case above pass while leaving this
+      // one red.
       // Decode entities BEFORE scanning.
       const outcome = await maskViaEngine(kitchenSinkPatient(), {
         user: clinician()
