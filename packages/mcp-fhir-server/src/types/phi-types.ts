@@ -136,6 +136,16 @@ export const RESOURCE_PHI_MATRIX: Record<string, PHILevel> = {
   'ClaimResponse': PHILevel.RESTRICTED,
   'PaymentNotice': PHILevel.RESTRICTED,
   'PaymentReconciliation': PHILevel.RESTRICTED,
+
+  // Resource types that were previously ABSENT from this matrix and therefore
+  // fell through to the `|| PHILevel.RESTRICTED` default at phi-classifier.ts:34.
+  // Listing them explicitly is a no-op at runtime; it records that RESTRICTED is
+  // intended for them rather than accidental.
+  // RelatedPerson carries the SAME IL-Core national-ID slice as Patient.
+  'RelatedPerson': PHILevel.RESTRICTED,
+  'Person': PHILevel.RESTRICTED,
+  'Media': PHILevel.RESTRICTED,
+  'Binary': PHILevel.RESTRICTED,
   
   // Research/quality (MINIMAL - aggregated data allowed)
   'ResearchStudy': PHILevel.MINIMAL,
@@ -203,3 +213,81 @@ export interface PHIAuditEvent {
   ipAddress?: string;
   requestId?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Global (resource-type-independent) masking rules
+// ---------------------------------------------------------------------------
+//
+// These exist so that a newly-supported resource type cannot silently omit a
+// rule for a field that is identifying on every resource that carries it.
+// `PHIClassifier.getResourceSpecificMaskingRules()` prepends them to whatever
+// the per-type `switch` produces, so a resource type with no `case` at all
+// still receives them.
+
+/**
+ * Narrative (`DomainResource.text`) handling policy.
+ *
+ * - `'remove'` — drop `text` entirely. This is the default, and the correct
+ *   default: the narrative is derived, never authoritative, and no clinical
+ *   decision should depend on it.
+ * - `'scrub'`  — keep a narrative, but rebuild `text.div` from decoded,
+ *   tag-stripped, PHI-redacted text and set `text.status = 'generated'`.
+ */
+export type NarrativePolicy = 'remove' | 'scrub';
+
+export interface PHIClassifierOptions {
+  /** Defaults to `'remove'`. Anything other than `'scrub'` is treated as `'remove'`. */
+  narrativePolicy?: NarrativePolicy;
+}
+
+/**
+ * `identifier` is the single most identifying element a FHIR resource carries.
+ * In Israel it holds the national ID (tudat zehut) under
+ * `http://fhir.health.gov.il/identifier/il-national-id`.
+ *
+ * `DEFAULT_MASKING_RULES[IDENTIFIABLE]` already hashes it, but that is one line
+ * in one branch of one lookup table. This rule makes the guarantee independent
+ * of the PHI level and of the per-type `switch`.
+ */
+export const GLOBAL_IDENTIFIER_MASKING_RULES: readonly MaskingRule[] = [
+  { field: 'identifier', maskingType: 'hash' }
+];
+
+/**
+ * Every `DomainResource` carries a `Narrative` whose XHTML `div` routinely
+ * inlines the full patient banner: name, national ID, date of birth, HMO,
+ * address. IL-Core constrains `Patient.identifier` with a check-digit
+ * invariant and constrains the narrative not at all.
+ *
+ * A resource whose structured fields are fully masked can still return the
+ * patient's name and ID in plain text — worse than not masking, because the
+ * output *looks* de-identified.
+ */
+export const GLOBAL_NARRATIVE_MASKING_RULES: readonly MaskingRule[] = [
+  { field: 'text', maskingType: 'remove' }
+];
+
+/**
+ * `Attachment.data` carries base64 blobs — usually PDFs or scans, which is
+ * where Israeli clinical documents actually live. A masked FHIR resource with
+ * an unmasked attached PDF is not de-identified.
+ *
+ * Only `data` is removed; `contentType`, `size`, `hash`, `title` and
+ * `creation` survive, so the model is still told that a document exists.
+ *
+ * Paths that do not exist on a given resource are no-ops in the masking
+ * engine, so this list is applied unconditionally rather than per resource
+ * type — same defence-in-depth argument as the identifier rule.
+ */
+export const GLOBAL_ATTACHMENT_MASKING_RULES: readonly MaskingRule[] = [
+  { field: 'data', maskingType: 'remove' },                          // Binary.data
+  { field: 'content.attachment.data', maskingType: 'remove' },       // DocumentReference.content[].attachment
+  { field: 'content.data', maskingType: 'remove' },                  // Media.content
+  { field: 'presentedForm.data', maskingType: 'remove' },            // DiagnosticReport.presentedForm[]
+  { field: 'photo.data', maskingType: 'remove' },                    // Patient/Practitioner/RelatedPerson.photo[]
+  { field: 'attachment.data', maskingType: 'remove' },               // generic single-level nesting
+  { field: 'contentAttachment.data', maskingType: 'remove' },        // Communication.payload[] choice element
+  { field: 'payload.contentAttachment.data', maskingType: 'remove' },
+  { field: 'valueAttachment.data', maskingType: 'remove' },          // Observation.valueAttachment
+  { field: 'form.data', maskingType: 'remove' }                      // Claim/Coverage form attachments
+];

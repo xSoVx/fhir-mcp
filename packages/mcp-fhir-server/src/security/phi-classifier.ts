@@ -4,8 +4,14 @@ import {
   MaskingRule,
   RESOURCE_PHI_MATRIX,
   DEFAULT_MASKING_RULES,
-  SENSITIVE_FIELD_PATTERNS
+  SENSITIVE_FIELD_PATTERNS,
+  GLOBAL_IDENTIFIER_MASKING_RULES,
+  GLOBAL_NARRATIVE_MASKING_RULES,
+  GLOBAL_ATTACHMENT_MASKING_RULES,
+  NarrativePolicy,
+  PHIClassifierOptions
 } from '../types/phi-types.js';
+import { scrubNarrative } from './narrative-scrubber.js';
 
 /**
  * PHI Classification Engine
@@ -13,6 +19,18 @@ import {
  */
 export class PHIClassifier {
   private classificationCache = new Map<string, PHIClassificationResult>();
+  private readonly narrativePolicy: NarrativePolicy;
+
+  /**
+   * @param options.narrativePolicy  `'remove'` (the default) drops
+   *   `DomainResource.text` outright. `'scrub'` rebuilds `text.div` from
+   *   decoded, tag-stripped, PHI-redacted text and marks it generated.
+   *   Anything unrecognised is treated as `'remove'` -- this default fails
+   *   closed.
+   */
+  constructor(options: PHIClassifierOptions = {}) {
+    this.narrativePolicy = options.narrativePolicy === 'scrub' ? 'scrub' : 'remove';
+  }
 
   /**
    * Classify a FHIR resource for PHI sensitivity
@@ -183,6 +201,10 @@ export class PHIClassifier {
     switch (resourceType) {
       case 'Patient':
         rules.push(
+          // Belt and braces. DEFAULT_MASKING_RULES[IDENTIFIABLE] and
+          // GLOBAL_IDENTIFIER_MASKING_RULES both hash `identifier` already;
+          // stating it here documents the intent at the site a reader looks.
+          { field: 'identifier', maskingType: 'hash' },
           { field: 'name', maskingType: 'replace', replacement: '***' },
           { field: 'birthDate', maskingType: 'partial' }, // Show year only
           { field: 'address', maskingType: 'remove' },
@@ -190,7 +212,20 @@ export class PHIClassifier {
           { field: 'photo', maskingType: 'remove' }
         );
         break;
-        
+
+      case 'RelatedPerson':
+        // IL-Core gives RelatedPerson the SAME national-ID slice as Patient.
+        rules.push(
+          { field: 'identifier', maskingType: 'hash' },
+          { field: 'name', maskingType: 'replace', replacement: '***' },
+          { field: 'birthDate', maskingType: 'partial' },
+          { field: 'address', maskingType: 'remove' },
+          { field: 'telecom', maskingType: 'remove' },
+          { field: 'photo', maskingType: 'remove' },
+          { field: 'patient', maskingType: 'hash' }
+        );
+        break;
+
       case 'Observation':
         rules.push(
           { field: 'subject', maskingType: 'hash' }, // Hash patient reference
@@ -198,25 +233,118 @@ export class PHIClassifier {
           { field: 'note', maskingType: 'remove' } // Remove free text
         );
         break;
-        
+
+      case 'Encounter':
+        rules.push(
+          { field: 'identifier', maskingType: 'hash' },
+          { field: 'subject', maskingType: 'hash' },
+          { field: 'participant', maskingType: 'remove' },
+          { field: 'account', maskingType: 'hash' }
+        );
+        break;
+
+      case 'Coverage':
+        // `subscriberId` is a plain string, not an Identifier, so neither the
+        // PHI-level defaults nor GLOBAL_IDENTIFIER_MASKING_RULES reach it. In
+        // Israeli payer data it very often *is* the national ID.
+        rules.push(
+          { field: 'identifier', maskingType: 'hash' },
+          { field: 'subscriberId', maskingType: 'hash' },
+          { field: 'dependent', maskingType: 'hash' },
+          { field: 'subscriber', maskingType: 'hash' },
+          { field: 'beneficiary', maskingType: 'hash' },
+          { field: 'policyHolder', maskingType: 'hash' }
+        );
+        break;
+
       case 'Organization':
         rules.push(
           { field: 'contact', maskingType: 'remove' },
           { field: 'endpoint', maskingType: 'remove' }
         );
         break;
-        
+
       case 'Practitioner':
         rules.push(
+          { field: 'identifier', maskingType: 'hash' },
           { field: 'name', maskingType: 'partial' }, // Show role/specialty only
           { field: 'telecom', maskingType: 'remove' },
           { field: 'address', maskingType: 'remove' },
           { field: 'photo', maskingType: 'remove' }
         );
         break;
+
+      case 'DocumentReference':
+        rules.push(
+          { field: 'identifier', maskingType: 'hash' },
+          { field: 'subject', maskingType: 'hash' },
+          { field: 'description', maskingType: 'remove' }
+        );
+        break;
+
+      case 'DiagnosticReport':
+        rules.push(
+          { field: 'identifier', maskingType: 'hash' },
+          { field: 'subject', maskingType: 'hash' },
+          { field: 'conclusion', maskingType: 'remove' }
+        );
+        break;
     }
 
-    return rules;
+    // Global rules are PREPENDED, so a resource type with no `case` above --
+    // and any type added to the matrix later -- still receives them.
+    return [...this.getGlobalMaskingRules(resource), ...rules];
+  }
+
+  /**
+   * Masking rules applied to every resource regardless of type.
+   *
+   * These are the defence-in-depth layer. They are intentionally independent
+   * of both `RESOURCE_PHI_MATRIX` and the `switch` above, so that adding a new
+   * resource type cannot silently omit them.
+   */
+  private getGlobalMaskingRules(resource: any): MaskingRule[] {
+    return [
+      ...GLOBAL_IDENTIFIER_MASKING_RULES,
+      ...this.getNarrativeMaskingRules(resource),
+      ...GLOBAL_ATTACHMENT_MASKING_RULES
+    ];
+  }
+
+  /**
+   * Narrative rules for this classifier's policy.
+   *
+   * Default (`'remove'`): drop `text` entirely.
+   * `'scrub'`: replace `text.div` with a decoded, tag-stripped, PHI-redacted
+   * rebuild and set `text.status` to `generated`. Anything the scrubber cannot
+   * produce a div for falls back to removal -- the fallback is closed.
+   */
+  private getNarrativeMaskingRules(resource: any): MaskingRule[] {
+    if (this.narrativePolicy !== 'scrub') {
+      return [...GLOBAL_NARRATIVE_MASKING_RULES];
+    }
+
+    const div = resource && resource.text ? resource.text.div : undefined;
+    if (typeof div !== 'string' || div.length === 0) {
+      return [...GLOBAL_NARRATIVE_MASKING_RULES];
+    }
+
+    const scrubbed = scrubNarrative(div);
+    if (!scrubbed.div) {
+      return [...GLOBAL_NARRATIVE_MASKING_RULES];
+    }
+
+    return [
+      { field: 'text.div', maskingType: 'replace', replacement: scrubbed.div },
+      { field: 'text.status', maskingType: 'replace', replacement: 'generated' }
+    ];
+  }
+
+  /**
+   * Narrative policy in force for this classifier instance.
+   */
+  public getNarrativePolicy(): NarrativePolicy {
+    return this.narrativePolicy;
   }
 
   /**

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 /**
  * The PHI canary.
  *
@@ -261,4 +262,91 @@ export function kitchenSinkBundle(canary: string = CANARY): JsonObject {
  */
 export function serialise(value: unknown): string {
   return JSON.stringify(value ?? null);
+}
+/* ---------------------------------------------------------------------------
+ * Lane-C aliases (merged during integration).
+ *
+ * Lane C created a second `fixtures/canary.ts` with its own names for the same
+ * values. The G-CANARY gate requires the literal to live in exactly ONE module,
+ * so that file was folded into this one and its names are re-exported here
+ * rather than kept as a second copy of the constant.
+ * ------------------------------------------------------------------------ */
+
+/** Lane-C name for {@link CANARY_NUMERIC_ENTITIES}. Identical value. */
+export const CANARY_ENTITY = CANARY_NUMERIC_ENTITIES;
+
+/**
+ * "Tamar Cohen" in Hebrew, from IL-Core's canonical Patient example, written
+ * with unicode escapes so the fixture survives any encoding round trip.
+ */
+export const CANARY_NAME = '\u05EA\u05DE\u05E8 \u05DB\u05D4\u05DF';
+
+/** The same name as XHTML numeric character references. */
+export const CANARY_NAME_ENTITY = '&#x5EA;&#x5DE;&#x5E8; &#x5DB;&#x5D4;&#x5DF;';
+
+/**
+ * First character of {@link CANARY_NAME} as an entity -- asserted absent from
+ * masked output. A scrubber that only decodes ASCII is not decoding.
+ */
+export const CANARY_NAME_ENTITY_FRAGMENT = '&#x5EA;';
+
+/* ---------------------------------------------------------------------------
+ * Lane-D aliases and fixtures (merged during integration), same reason.
+ * ------------------------------------------------------------------------ */
+
+/**
+ * What the PRE-FIX engine emitted for the canary: an unsalted, unkeyed sha256
+ * truncated to 16 hex characters.
+ *
+ * Computed rather than hard-coded, so the constant tracks the actual attack
+ * instead of a copy of it. The Israeli ID space is ~10^8 after the check digit,
+ * so a complete rainbow table over these values is minutes of GPU time -- the
+ * value below is therefore equivalent to publishing the ID. No masked output
+ * may ever contain this string again.
+ */
+export const LEGACY_UNSALTED_SHA256 = createHash('sha256')
+  .update(CANARY)
+  .digest('hex')
+  .substring(0, 16);
+
+/** An Observation whose `contained[]` Patient carries the canary (finding 5). */
+export function observationWithContainedPatient(canary: string = CANARY): JsonObject {
+  return {
+    resourceType: 'Observation',
+    id: 'obs-1',
+    status: 'final',
+    subject: { reference: '#p1' },
+    contained: [
+      {
+        resourceType: 'Patient',
+        id: 'p1',
+        identifier: [{ system: 'http://example.org/il-id', value: canary }],
+        name: [{ family: 'Cohen', given: ['Dana'] }],
+        birthDate: '1980-01-01'
+      }
+    ]
+  };
+}
+
+/** A Bundle carrying the canary inside `entry[].resource` (finding 5). */
+export function bundleWithPatientEntry(canary: string = CANARY): JsonObject {
+  return {
+    resourceType: 'Bundle',
+    type: 'searchset',
+    entry: [
+      {
+        fullUrl: 'http://example.org/Patient/p1',
+        resource: {
+          resourceType: 'Patient',
+          id: 'p1',
+          identifier: [{ system: 'http://example.org/il-id', value: canary }],
+          name: [{ family: 'Cohen' }]
+        }
+      },
+      {
+        fullUrl: 'http://example.org/Observation/obs-1',
+        resource: observationWithContainedPatient(canary)
+      }
+    ]
+  };
 }
