@@ -336,12 +336,24 @@ describe('PHI Protection System', () => {
       );
       expect(authorizedResult.allowed).toBe(true);
 
-      // 4. Masking (if required)
-      if (authorizedResult.requiresMasking && authorizedResult.maskingRules) {
-        const maskedResource = authEngine.applyMasking(patientResource, authorizedResult);
-        expect(maskedResource.name[0].family).toBe('***'); // Should be masked
-        expect(maskedResource.address).toBeUndefined(); // Should be removed
-      }
+      // 4. Masking is MANDATORY for an identifiable resource, not conditional.
+      //    This block used to sit behind
+      //    `if (authorizedResult.requiresMasking && authorizedResult.maskingRules)`.
+      //    Before the authorization-engine fix, strict mode returned
+      //    { allowed: true } with NEITHER field set for a privileged user, so the
+      //    guard was always false and these assertions never executed once. The
+      //    test passed by never running its own body. The conditional is removed
+      //    so it cannot go vacuous again.
+      expect(authorizedResult.requiresMasking).toBe(true);
+      expect(authorizedResult.maskingRules?.length ?? 0).toBeGreaterThan(0);
+
+      const maskedResource = authEngine.applyMasking(patientResource, authorizedResult);
+      // { field: 'name', maskingType: 'replace', replacement: '***' } replaces
+      // the whole `name` element, not `name[0].family`.
+      expect(maskedResource.name).toBe('***');
+      expect(maskedResource.address).toBeUndefined();
+      expect(maskedResource.telecom).toBeUndefined();
+      expect(JSON.stringify(maskedResource)).not.toContain('Smith');
     });
 
     test('should handle mixed resource bundles correctly', async () => {
