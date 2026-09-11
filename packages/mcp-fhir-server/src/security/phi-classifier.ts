@@ -4,7 +4,8 @@ import {
   MaskingRule,
   RESOURCE_PHI_MATRIX,
   DEFAULT_MASKING_RULES,
-  SENSITIVE_FIELD_PATTERNS
+  SENSITIVE_FIELD_PATTERNS,
+  GLOBAL_IDENTIFIER_MASKING_RULES
 } from '../types/phi-types.js';
 
 /**
@@ -13,7 +14,6 @@ import {
  */
 export class PHIClassifier {
   private classificationCache = new Map<string, PHIClassificationResult>();
-
   /**
    * Classify a FHIR resource for PHI sensitivity
    */
@@ -183,6 +183,10 @@ export class PHIClassifier {
     switch (resourceType) {
       case 'Patient':
         rules.push(
+          // Belt and braces. DEFAULT_MASKING_RULES[IDENTIFIABLE] and
+          // GLOBAL_IDENTIFIER_MASKING_RULES both hash `identifier` already;
+          // stating it here documents the intent at the site a reader looks.
+          { field: 'identifier', maskingType: 'hash' },
           { field: 'name', maskingType: 'replace', replacement: '***' },
           { field: 'birthDate', maskingType: 'partial' }, // Show year only
           { field: 'address', maskingType: 'remove' },
@@ -190,7 +194,20 @@ export class PHIClassifier {
           { field: 'photo', maskingType: 'remove' }
         );
         break;
-        
+
+      case 'RelatedPerson':
+        // IL-Core gives RelatedPerson the SAME national-ID slice as Patient.
+        rules.push(
+          { field: 'identifier', maskingType: 'hash' },
+          { field: 'name', maskingType: 'replace', replacement: '***' },
+          { field: 'birthDate', maskingType: 'partial' },
+          { field: 'address', maskingType: 'remove' },
+          { field: 'telecom', maskingType: 'remove' },
+          { field: 'photo', maskingType: 'remove' },
+          { field: 'patient', maskingType: 'hash' }
+        );
+        break;
+
       case 'Observation':
         rules.push(
           { field: 'subject', maskingType: 'hash' }, // Hash patient reference
@@ -198,25 +215,78 @@ export class PHIClassifier {
           { field: 'note', maskingType: 'remove' } // Remove free text
         );
         break;
-        
+
+      case 'Encounter':
+        rules.push(
+          { field: 'identifier', maskingType: 'hash' },
+          { field: 'subject', maskingType: 'hash' },
+          { field: 'participant', maskingType: 'remove' },
+          { field: 'account', maskingType: 'hash' }
+        );
+        break;
+
+      case 'Coverage':
+        // `subscriberId` is a plain string, not an Identifier, so neither the
+        // PHI-level defaults nor GLOBAL_IDENTIFIER_MASKING_RULES reach it. In
+        // Israeli payer data it very often *is* the national ID.
+        rules.push(
+          { field: 'identifier', maskingType: 'hash' },
+          { field: 'subscriberId', maskingType: 'hash' },
+          { field: 'dependent', maskingType: 'hash' },
+          { field: 'subscriber', maskingType: 'hash' },
+          { field: 'beneficiary', maskingType: 'hash' },
+          { field: 'policyHolder', maskingType: 'hash' }
+        );
+        break;
+
       case 'Organization':
         rules.push(
           { field: 'contact', maskingType: 'remove' },
           { field: 'endpoint', maskingType: 'remove' }
         );
         break;
-        
+
       case 'Practitioner':
         rules.push(
+          { field: 'identifier', maskingType: 'hash' },
           { field: 'name', maskingType: 'partial' }, // Show role/specialty only
           { field: 'telecom', maskingType: 'remove' },
           { field: 'address', maskingType: 'remove' },
           { field: 'photo', maskingType: 'remove' }
         );
         break;
+
+      case 'DocumentReference':
+        rules.push(
+          { field: 'identifier', maskingType: 'hash' },
+          { field: 'subject', maskingType: 'hash' },
+          { field: 'description', maskingType: 'remove' }
+        );
+        break;
+
+      case 'DiagnosticReport':
+        rules.push(
+          { field: 'identifier', maskingType: 'hash' },
+          { field: 'subject', maskingType: 'hash' },
+          { field: 'conclusion', maskingType: 'remove' }
+        );
+        break;
     }
 
-    return rules;
+    // Global rules are PREPENDED, so a resource type with no `case` above --
+    // and any type added to the matrix later -- still receives them.
+    return [...this.getGlobalMaskingRules(), ...rules];
+  }
+
+  /**
+   * Masking rules applied to every resource regardless of type.
+   *
+   * These are the defence-in-depth layer. They are intentionally independent
+   * of both `RESOURCE_PHI_MATRIX` and the `switch` above, so that adding a new
+   * resource type cannot silently omit them.
+   */
+  private getGlobalMaskingRules(): MaskingRule[] {
+    return [...GLOBAL_IDENTIFIER_MASKING_RULES];
   }
 
   /**

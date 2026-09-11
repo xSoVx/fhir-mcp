@@ -136,6 +136,16 @@ export const RESOURCE_PHI_MATRIX: Record<string, PHILevel> = {
   'ClaimResponse': PHILevel.RESTRICTED,
   'PaymentNotice': PHILevel.RESTRICTED,
   'PaymentReconciliation': PHILevel.RESTRICTED,
+
+  // Resource types that were previously ABSENT from this matrix and therefore
+  // fell through to the `|| PHILevel.RESTRICTED` default at phi-classifier.ts:34.
+  // Listing them explicitly is a no-op at runtime; it records that RESTRICTED is
+  // intended for them rather than accidental.
+  // RelatedPerson carries the SAME IL-Core national-ID slice as Patient.
+  'RelatedPerson': PHILevel.RESTRICTED,
+  'Person': PHILevel.RESTRICTED,
+  'Media': PHILevel.RESTRICTED,
+  'Binary': PHILevel.RESTRICTED,
   
   // Research/quality (MINIMAL - aggregated data allowed)
   'ResearchStudy': PHILevel.MINIMAL,
@@ -203,3 +213,26 @@ export interface PHIAuditEvent {
   ipAddress?: string;
   requestId?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Global (resource-type-independent) masking rules
+// ---------------------------------------------------------------------------
+//
+// These exist so that a newly-supported resource type cannot silently omit a
+// rule for a field that is identifying on every resource that carries it.
+// `PHIClassifier.getResourceSpecificMaskingRules()` prepends them to whatever
+// the per-type `switch` produces, so a resource type with no `case` at all
+// still receives them.
+
+/**
+ * `identifier` is the single most identifying element a FHIR resource carries.
+ * In Israel it holds the national ID (tudat zehut) under
+ * `http://fhir.health.gov.il/identifier/il-national-id`.
+ *
+ * `DEFAULT_MASKING_RULES[IDENTIFIABLE]` already hashes it, but that is one line
+ * in one branch of one lookup table. This rule makes the guarantee independent
+ * of the PHI level and of the per-type `switch`.
+ */
+export const GLOBAL_IDENTIFIER_MASKING_RULES: readonly MaskingRule[] = [
+  { field: 'identifier', maskingType: 'hash' }
+];
