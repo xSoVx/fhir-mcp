@@ -5,8 +5,12 @@ import {
   RESOURCE_PHI_MATRIX,
   DEFAULT_MASKING_RULES,
   SENSITIVE_FIELD_PATTERNS,
-  GLOBAL_IDENTIFIER_MASKING_RULES
+  GLOBAL_IDENTIFIER_MASKING_RULES,
+  GLOBAL_NARRATIVE_MASKING_RULES,
+  NarrativePolicy,
+  PHIClassifierOptions
 } from '../types/phi-types.js';
+import { scrubNarrative } from './narrative-scrubber.js';
 
 /**
  * PHI Classification Engine
@@ -14,6 +18,19 @@ import {
  */
 export class PHIClassifier {
   private classificationCache = new Map<string, PHIClassificationResult>();
+  private readonly narrativePolicy: NarrativePolicy;
+
+  /**
+   * @param options.narrativePolicy  `'remove'` (the default) drops
+   *   `DomainResource.text` outright. `'scrub'` rebuilds `text.div` from
+   *   decoded, tag-stripped, PHI-redacted text and marks it generated.
+   *   Anything unrecognised is treated as `'remove'` -- this default fails
+   *   closed.
+   */
+  constructor(options: PHIClassifierOptions = {}) {
+    this.narrativePolicy = options.narrativePolicy === 'scrub' ? 'scrub' : 'remove';
+  }
+
   /**
    * Classify a FHIR resource for PHI sensitivity
    */
@@ -275,7 +292,7 @@ export class PHIClassifier {
 
     // Global rules are PREPENDED, so a resource type with no `case` above --
     // and any type added to the matrix later -- still receives them.
-    return [...this.getGlobalMaskingRules(), ...rules];
+    return [...this.getGlobalMaskingRules(resource), ...rules];
   }
 
   /**
@@ -285,8 +302,47 @@ export class PHIClassifier {
    * of both `RESOURCE_PHI_MATRIX` and the `switch` above, so that adding a new
    * resource type cannot silently omit them.
    */
-  private getGlobalMaskingRules(): MaskingRule[] {
-    return [...GLOBAL_IDENTIFIER_MASKING_RULES];
+  private getGlobalMaskingRules(resource: any): MaskingRule[] {
+    return [
+      ...GLOBAL_IDENTIFIER_MASKING_RULES,
+      ...this.getNarrativeMaskingRules(resource)
+    ];
+  }
+
+  /**
+   * Narrative rules for this classifier's policy.
+   *
+   * Default (`'remove'`): drop `text` entirely.
+   * `'scrub'`: replace `text.div` with a decoded, tag-stripped, PHI-redacted
+   * rebuild and set `text.status` to `generated`. Anything the scrubber cannot
+   * produce a div for falls back to removal -- the fallback is closed.
+   */
+  private getNarrativeMaskingRules(resource: any): MaskingRule[] {
+    if (this.narrativePolicy !== 'scrub') {
+      return [...GLOBAL_NARRATIVE_MASKING_RULES];
+    }
+
+    const div = resource && resource.text ? resource.text.div : undefined;
+    if (typeof div !== 'string' || div.length === 0) {
+      return [...GLOBAL_NARRATIVE_MASKING_RULES];
+    }
+
+    const scrubbed = scrubNarrative(div);
+    if (!scrubbed.div) {
+      return [...GLOBAL_NARRATIVE_MASKING_RULES];
+    }
+
+    return [
+      { field: 'text.div', maskingType: 'replace', replacement: scrubbed.div },
+      { field: 'text.status', maskingType: 'replace', replacement: 'generated' }
+    ];
+  }
+
+  /**
+   * Narrative policy in force for this classifier instance.
+   */
+  public getNarrativePolicy(): NarrativePolicy {
+    return this.narrativePolicy;
   }
 
   /**

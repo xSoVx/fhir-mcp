@@ -225,6 +225,22 @@ export interface PHIAuditEvent {
 // still receives them.
 
 /**
+ * Narrative (`DomainResource.text`) handling policy.
+ *
+ * - `'remove'` — drop `text` entirely. This is the default, and the correct
+ *   default: the narrative is derived, never authoritative, and no clinical
+ *   decision should depend on it.
+ * - `'scrub'`  — keep a narrative, but rebuild `text.div` from decoded,
+ *   tag-stripped, PHI-redacted text and set `text.status = 'generated'`.
+ */
+export type NarrativePolicy = 'remove' | 'scrub';
+
+export interface PHIClassifierOptions {
+  /** Defaults to `'remove'`. Anything other than `'scrub'` is treated as `'remove'`. */
+  narrativePolicy?: NarrativePolicy;
+}
+
+/**
  * `identifier` is the single most identifying element a FHIR resource carries.
  * In Israel it holds the national ID (tudat zehut) under
  * `http://fhir.health.gov.il/identifier/il-national-id`.
@@ -235,4 +251,18 @@ export interface PHIAuditEvent {
  */
 export const GLOBAL_IDENTIFIER_MASKING_RULES: readonly MaskingRule[] = [
   { field: 'identifier', maskingType: 'hash' }
+];
+
+/**
+ * Every `DomainResource` carries a `Narrative` whose XHTML `div` routinely
+ * inlines the full patient banner: name, national ID, date of birth, HMO,
+ * address. IL-Core constrains `Patient.identifier` with a check-digit
+ * invariant and constrains the narrative not at all.
+ *
+ * A resource whose structured fields are fully masked can still return the
+ * patient's name and ID in plain text — worse than not masking, because the
+ * output *looks* de-identified.
+ */
+export const GLOBAL_NARRATIVE_MASKING_RULES: readonly MaskingRule[] = [
+  { field: 'text', maskingType: 'remove' }
 ];
