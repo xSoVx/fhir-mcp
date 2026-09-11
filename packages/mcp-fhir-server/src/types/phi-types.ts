@@ -266,3 +266,28 @@ export const GLOBAL_IDENTIFIER_MASKING_RULES: readonly MaskingRule[] = [
 export const GLOBAL_NARRATIVE_MASKING_RULES: readonly MaskingRule[] = [
   { field: 'text', maskingType: 'remove' }
 ];
+
+/**
+ * `Attachment.data` carries base64 blobs — usually PDFs or scans, which is
+ * where Israeli clinical documents actually live. A masked FHIR resource with
+ * an unmasked attached PDF is not de-identified.
+ *
+ * Only `data` is removed; `contentType`, `size`, `hash`, `title` and
+ * `creation` survive, so the model is still told that a document exists.
+ *
+ * Paths that do not exist on a given resource are no-ops in the masking
+ * engine, so this list is applied unconditionally rather than per resource
+ * type — same defence-in-depth argument as the identifier rule.
+ */
+export const GLOBAL_ATTACHMENT_MASKING_RULES: readonly MaskingRule[] = [
+  { field: 'data', maskingType: 'remove' },                          // Binary.data
+  { field: 'content.attachment.data', maskingType: 'remove' },       // DocumentReference.content[].attachment
+  { field: 'content.data', maskingType: 'remove' },                  // Media.content
+  { field: 'presentedForm.data', maskingType: 'remove' },            // DiagnosticReport.presentedForm[]
+  { field: 'photo.data', maskingType: 'remove' },                    // Patient/Practitioner/RelatedPerson.photo[]
+  { field: 'attachment.data', maskingType: 'remove' },               // generic single-level nesting
+  { field: 'contentAttachment.data', maskingType: 'remove' },        // Communication.payload[] choice element
+  { field: 'payload.contentAttachment.data', maskingType: 'remove' },
+  { field: 'valueAttachment.data', maskingType: 'remove' },          // Observation.valueAttachment
+  { field: 'form.data', maskingType: 'remove' }                      // Claim/Coverage form attachments
+];

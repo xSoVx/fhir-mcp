@@ -7,6 +7,7 @@ import {
   SENSITIVE_FIELD_PATTERNS,
   GLOBAL_IDENTIFIER_MASKING_RULES,
   GLOBAL_NARRATIVE_MASKING_RULES,
+  GLOBAL_ATTACHMENT_MASKING_RULES,
   NarrativePolicy,
   PHIClassifierOptions
 } from '../types/phi-types.js';
@@ -305,7 +306,8 @@ export class PHIClassifier {
   private getGlobalMaskingRules(resource: any): MaskingRule[] {
     return [
       ...GLOBAL_IDENTIFIER_MASKING_RULES,
-      ...this.getNarrativeMaskingRules(resource)
+      ...this.getNarrativeMaskingRules(resource),
+      ...GLOBAL_ATTACHMENT_MASKING_RULES
     ];
   }
 
