@@ -22,7 +22,9 @@ import { PhiGuardConfig } from '../types/config.js';
  * the path which could have leaked it actually executed.
  */
 
-const CANARY = '000000018';
+// Repointed at integration: lane B declared a fourth copy of the literal.
+// It lives in exactly one module now (conflict 1).
+import { CANARY } from './fixtures/canary.js';
 
 const SAFE_CONFIG: PhiGuardConfig = { mode: 'safe', maskFields: [], removeFields: [] };
 

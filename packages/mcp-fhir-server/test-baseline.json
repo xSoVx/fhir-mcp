@@ -1,39 +1,22 @@
 {
-  "$comment": [
-    "Known-failing tests on the PHI remediation baseline (commit d1dcac1).",
-    "",
-    "These are PRE-EXISTING product/test disagreements that were invisible until",
-    "T0.1 repaired the ESM setup and the suite actually executed for the first",
-    "time. They are quarantined here -- not deleted, not skipped -- so that CI can",
-    "gate on the suite from day one while the remediation lanes work.",
-    "",
-    "scripts/check-test-baseline.mjs enforces this list in BOTH directions:",
-    "  * a test that fails and is NOT listed here  -> CI fails (a regression)",
-    "  * a test that is listed here and now PASSES -> CI fails (prune the entry)",
-    "The second direction is what stops this file from silently rotting into a",
-    "blanket suppression.",
-    "",
-    "Each entry names the lane expected to resolve it. Remove the entry in the",
-    "same commit as the fix."
-  ],
   "recordedAtCommit": "d1dcac1d1d1bdbd9e3091c1362a5aced1fe3ab67",
-  "recordedBy": "lane-a/test-infra (T0.1; floor raised to 70 by T0.2b/T0.3)",
-  "expectedTotalTestsAtLeast": 70,
+  "recordedBy": "integration/phi-remediation (all five lanes merged; A+B+C+D+E)",
+  "expectedTotalTestsAtLeast": 220,
   "knownFailures": [
     {
       "fullName": "PHI Protection System PHI Classification should classify Organization resource as MINIMAL",
-      "reason": "Fixture Organization carries an identifier; determineFinalPHILevel (phi-classifier.ts:139-141) upgrades MINIMAL -> IDENTIFIABLE on any direct identifier. Expected 'minimal', received 'identifiable'.",
-      "owner": "lane owning phi-classifier.ts (T1.2) -- decide whether the upgrade rule or the test is wrong"
+      "reason": "UNCHANGED BY THE MERGE. Fixture Organization carries id 'org-123'; phi-classifier.ts:89 sets hasDirectIdentifiers on id OR identifier, and determineFinalPHILevel then upgrades MINIMAL -> IDENTIFIABLE. Expected 'minimal', received 'identifiable'. Lane E pinned the mechanism exactly (see lane-e-phi-canary-fixture.ts RESOURCE_CASES: MINIMAL is reachable ONLY for a resource carrying neither id nor identifier). Lane C owned phi-classifier.ts and did not change the upgrade rule.",
+      "owner": "STILL OPEN after integration. This is a policy decision, not a merge conflict: is a logical id on a NON-PATIENT resource a direct identifier? Relaxing the rule reduces protection, so it was deliberately not decided during the merge. Either narrow hasDirectIdentifiers to identifier (plus id on patient-like types), or change the test to expect 'identifiable' and delete PHILevel.MINIMAL as unreachable."
     },
     {
       "fullName": "PHI Protection System PHI Authorization Engine should allow masked access to minimal PHI resources",
-      "reason": "Downstream of the classification upgrade above: the resource is IDENTIFIABLE, so strict mode blocks it and allowed=false.",
-      "owner": "lane owning phi-classifier.ts (T1.2)"
+      "reason": "UNCHANGED BY THE MERGE. Downstream of the classification upgrade above: the resource is IDENTIFIABLE, not MINIMAL, so handleIdentifiableResource -- not handleMinimalResource -- decides, and the test's user is unprivileged, so allowed=false. Lane E's fix did not change this; it closed unmasked-ALLOW paths, and this is a DENY.",
+      "owner": "STILL OPEN. Resolves automatically with knownFailures[0]."
     },
     {
       "fullName": "PHI Protection System Integration Tests should handle mixed resource bundles correctly",
-      "reason": "Downstream of the same upgrade: the Organization entry is blocked, so 1 result is returned instead of 2.",
-      "owner": "lane owning phi-classifier.ts (T1.2)"
+      "reason": "UNCHANGED BY THE MERGE. Downstream of the same upgrade: the Organization entry classifies IDENTIFIABLE and is blocked, so 1 result is returned instead of 2.",
+      "owner": "STILL OPEN. Resolves automatically with knownFailures[0]."
     },
     {
       "fullName": "Security Integration Tests Input Validation should sanitize potentially harmful input",
@@ -60,5 +43,27 @@
       "reason": "Pre-existing; downstream of the rate-limiter failures above.",
       "owner": "unassigned -- outside the PHI remediation plan"
     }
+  ],
+  "$comment": [
+    "Known-failing tests on the integrated PHI remediation branch.",
+    "",
+    "Baseline originally recorded by lane-a/test-infra at commit d1dcac1 with 8",
+    "entries over 70 tests. After merging all five lanes the suite is 220 tests.",
+    "",
+    "WHAT THE MERGE CHANGED: nothing was added to this list -- there were no new",
+    "regressions. Nothing was removed either. The three PHI-classification entries",
+    "were expected to flip once lane C's rules and lane E's engine fix landed. They",
+    "did not, and the reason is recorded per entry: the blocker is the",
+    "MINIMAL -> IDENTIFIABLE upgrade on a bare id, which no lane owned a decision",
+    "on. The remaining five are outside the PHI remediation plan entirely.",
+    "",
+    "scripts/check-test-baseline.mjs enforces this list in BOTH directions:",
+    "  * a test that fails and is NOT listed here  -> CI fails (a regression)",
+    "  * a test that is listed here and now PASSES -> CI fails (prune the entry)",
+    "The second direction is what stops this file from silently rotting into a",
+    "blanket suppression.",
+    "",
+    "Each entry names the lane expected to resolve it. Remove the entry in the",
+    "same commit as the fix."
   ]
 }

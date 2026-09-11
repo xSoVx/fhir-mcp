@@ -124,8 +124,11 @@ export function stripTags(input: string): string {
  * Israeli national ID (tudat zehut) check digit.
  *
  * The value is LEFT-PADDED to nine digits, so leading zeros are valid and
- * meaningful: `000000018` is a valid ID and is the IL-Core specification's own
- * example. Nothing here may require a non-zero leading digit.
+ * meaningful: the CANARY exported by src/tests/fixtures/canary.ts is a valid
+ * ID with leading zeros, taken from the IL-Core specification's own example.
+ * Nothing here may require a non-zero leading digit. (The literal is not
+ * repeated here: it lives in exactly one module, and a grep for it must find
+ * only that module.)
  */
 export function isValidIsraeliNationalId(candidate: string): boolean {
   if (!/^[0-9]{1,9}$/.test(candidate)) {

@@ -32,7 +32,7 @@ describe('Finding 3 - the narrative is not a field, it is untrusted HTML', () =>
   let engine: PHIAuthorizationEngine;
 
   beforeEach(() => {
-    engine = createAuthEngine('permissive');
+    engine = createAuthEngine('strict');
   });
 
   describe('safe mode (default policy)', () => {

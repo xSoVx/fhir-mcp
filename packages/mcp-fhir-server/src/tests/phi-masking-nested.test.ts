@@ -7,6 +7,8 @@ import {
 import { MaskingRule } from '../types/phi-types.js';
 import {
   CANARY,
+  asArray,
+  asObject,
   observationWithContainedPatient,
   bundleWithPatientEntry
 } from './fixtures/canary.js';
@@ -45,7 +47,7 @@ describe('PHIMaskingEngine - contained[] recursion (finding 5)', () => {
     // Positive proof the nested resource was processed at all.
     expect(masked.contained).toHaveLength(1);
     expect(masked.contained[0].resourceType).toBe('Patient');
-    expect(masked.contained[0].identifier).not.toEqual(original.contained[0].identifier);
+    expect(masked.contained[0].identifier).not.toEqual(asObject(asArray(original.contained)[0]).identifier);
 
     // ...and only then the canary assertion.
     expect(JSON.stringify(masked)).not.toContain(CANARY);
@@ -70,7 +72,7 @@ describe('PHIMaskingEngine - contained[] recursion (finding 5)', () => {
 
     engine.applyMasking(original, OBSERVATION_RULES);
 
-    expect(original.contained[0].identifier[0].value).toBe(CANARY);
+    expect(asObject(asArray(asObject(asArray(original.contained)[0]).identifier)[0]).value).toBe(CANARY);
   });
 });
 
@@ -87,7 +89,7 @@ describe('PHIMaskingEngine - Bundle.entry[] recursion (finding 5)', () => {
     expect(masked.entry).toHaveLength(2);
     expect(masked.entry[0].resource.resourceType).toBe('Patient');
     expect(masked.entry[0].resource.identifier)
-      .not.toEqual(original.entry[0].resource.identifier);
+      .not.toEqual(asObject(asObject(asArray(original.entry)[0]).resource).identifier);
 
     expect(JSON.stringify(masked)).not.toContain(CANARY);
   });

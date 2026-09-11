@@ -16,13 +16,24 @@ export const AUTHORIZED_USER: User = {
 };
 
 /**
- * `'permissive'` is the only engine mode that returns a MASKED identifiable
- * resource. `'strict'` blocks it and `'trusted'`/disabled short-circuits before
- * masking, so a masking regression test must run in permissive mode or it
- * tests nothing.
+ * RESOLVED AT INTEGRATION (conflict 2: permissive vs strict).
+ *
+ * Lane C wrote this harness against the pre-fix engine, where 'permissive' was
+ * the only mode that returned a MASKED identifiable resource: 'strict' blocked
+ * it and 'trusted'/disabled short-circuited before masking ever ran.
+ *
+ * Lane E settled the post-fix behaviour and its verdict governs here.
+ * handleIdentifiableResource no longer has any unmasked-allow path, so 'strict'
+ * now returns a properly MASKED identifiable resource for a privileged user.
+ * Lane B independently made 'permissive' unreachable from any valid
+ * PhiGuardConfig (ENGINE_MODE_BY_GUARD_MODE has no entry for it).
+ *
+ * The default is therefore 'strict' -- the mode production can actually reach.
+ * A caller may still pass 'permissive' explicitly to exercise that engine
+ * branch, but no regression test should depend on it by default.
  */
 export function createAuthEngine(
-  mode: PHIProtectionConfig['mode'] = 'permissive'
+  mode: PHIProtectionConfig['mode'] = 'strict'
 ): PHIAuthorizationEngine {
   const config: PHIProtectionConfig = {
     enabled: true,

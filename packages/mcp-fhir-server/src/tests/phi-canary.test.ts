@@ -121,18 +121,39 @@ describe('PHI canary', () => {
     });
 
     test('authorized === true is still not enough on its own', async () => {
-      // A clinician is NOT blocked in strict mode, so authorized is true and
-      // maskedResource is defined -- both anti-vacuity assertions pass.
-      const outcome = await maskViaGuard(kitchenSinkPatient(), {
-        user: clinician()
+      // REWRITTEN AT INTEGRATION. Lane A wrote this against master, where a
+      // clinician in strict mode was ALLOWED and handed back the RAW resource:
+      // handleIdentifiableResource fell through to a branch that returned
+      // allowed without requiresMasking. The test pinned that leak as proof
+      // that uthorized && maskedResource is a weaker guard than masking
+      // actually ran.
+      //
+      // Lane E closed that hole, so the original body now fails -- the engine
+      // masks. The DISTINCTION it exists to defend is not obsolete, though: a
+      // caller can still get authorized===true with maskedResource defined and
+      // no masking applied, because 'trusted' mode disables protection and
+      // returns the resource untouched. That is the surviving instance of the
+      // same shape, so the test is repointed at it rather than deleted.
+      const trusted = await maskViaGuard(kitchenSinkPatient(), {
+        user: clinician(),
+        mode: 'trusted'
       });
-      expectMaskingActuallyRan(outcome);
 
-      // But handleIdentifiableResource falls through to the default branch
-      // (phi-authorization-engine.ts:240-255), which returns allowed WITHOUT
-      // requiresMasking, so PhiGuard hands back the RAW resource.
-      expect(outcome.maskingApplied).toBe(false);
-      expect(serialise(outcome.maskedResource)).toContain(CANARY);
+      // The WEAK guard is satisfied...
+      expectMaskingActuallyRan(trusted);
+
+      // ...and yet nothing was masked, and the canary is right there.
+      expect(trusted.maskingApplied).toBe(false);
+      expect(serialise(trusted.maskedResource)).toContain(CANARY);
+
+      // The STRONG guard is what catches it. Proven by construction: it throws
+      // on the same outcome the weak guard accepted.
+      expect(() => expectMaskingEngineRan(trusted)).toThrow();
+
+      // And the strong guard is not vacuously strict -- the same call in the
+      // mode production actually uses does satisfy it.
+      const safe = await maskViaGuard(kitchenSinkPatient(), { user: clinician() });
+      expectMaskingEngineRan(safe);
     });
   });
   // --------------------------------------------------------------------------
@@ -156,7 +177,7 @@ describe('PHI canary', () => {
       expect(serialise(outcome.maskedResource)).not.toContain(CANARY);
     });
 
-    test.failing('does not leak the canary from an Observation read by a clinician', async () => {
+    test('does not leak the canary from an Observation read by a clinician', async () => {
       const outcome = await maskViaGuard(kitchenSinkObservation(), {
         user: clinician()
       });
@@ -236,7 +257,7 @@ describe('PHI canary', () => {
   });
 
   describe('surface: text.div narrative [owner: T2.1]', () => {
-    test.failing('does not leak the canary through text.div, literal', async () => {
+    test('does not leak the canary through text.div, literal', async () => {
       const outcome = await maskViaEngine(kitchenSinkPatient(), {
         user: clinician()
       });
@@ -244,7 +265,7 @@ describe('PHI canary', () => {
       expect(serialise(asObject(outcome.maskedResource).text)).not.toContain(CANARY);
     });
 
-    test.failing('does not leak the canary through text.div as numeric character references', async () => {
+    test('does not leak the canary through text.div as numeric character references', async () => {
       // The trap in executable form. A scrubber that regexes the RAW narrative
       // for the plaintext CANARY makes the case above pass while leaving this
       // one red.
@@ -259,7 +280,7 @@ describe('PHI canary', () => {
     });
   });
   describe('surface: contained[] [owner: T2.3]', () => {
-    test.failing('masks a contained RelatedPerson inside a Patient by its own type', async () => {
+    test('masks a contained RelatedPerson inside a Patient by its own type', async () => {
       const outcome = await maskViaEngine(kitchenSinkPatient(), {
         user: clinician()
       });
@@ -273,7 +294,7 @@ describe('PHI canary', () => {
       expect(serialise(contained)).not.toContain(CANARY);
     });
 
-    test.failing('masks a contained Patient inside an Observation by its own type', async () => {
+    test('masks a contained Patient inside an Observation by its own type', async () => {
       const outcome = await maskViaEngine(kitchenSinkObservation(), {
         user: clinician()
       });
@@ -304,7 +325,7 @@ describe('PHI canary', () => {
   });
 
   describe('surface: Attachment.data [owner: T3.1]', () => {
-    test.failing('does not leak a base64-encoded canary, and keeps contentType and size', async () => {
+    test('does not leak a base64-encoded canary, and keeps contentType and size', async () => {
       const outcome = await maskViaEngine(kitchenSinkDocumentReference(), {
         user: clinician()
       });

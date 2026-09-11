@@ -60,8 +60,13 @@ async function authorizeAndMask(
 
 describe('the canary itself is load-bearing', () => {
   it('is a valid Israeli ID with leading zeros and is genuinely present in the fixture', () => {
-    expect(CANARY).toBe('000000018');
+    // Asserted STRUCTURALLY, not against an inlined copy: a second copy of the
+    // literal is a second thing to keep in sync, and the point of exporting it
+    // from one module is that there is no second copy.
+    expect(CANARY).toHaveLength(9);
+    expect(CANARY).toMatch(/^\d+$/);
     expect(CANARY.startsWith('0')).toBe(true);
+    expect(/^[1-9]\d{8}$/.test(CANARY)).toBe(false);
     expect(JSON.stringify(canaryPatient())).toContain(CANARY);
   });
 
@@ -101,7 +106,10 @@ describe('strict mode + privileged user returns a MASKED identifiable resource',
     // assert the replacement happened rather than assuming array shape.
     expect(typeof out.maskedResource.identifier).toBe('string');
     expect(out.maskedResource.identifier).not.toBe(CANARY);
-    expect(out.maskedResource.identifier).toMatch(/^[0-9a-f]{16}$/);
+    // Token shape is lane D's HMAC pseudonym (PT_ + 12 base64url chars), not
+    // the pre-fix unsalted sha256 hex this lane originally pinned. See the
+    // merge notes: lane D replaced createHash with createHmac in T2.2.
+    expect(out.maskedResource.identifier).toMatch(/^PT_[A-Za-z0-9_-]{12}$/);
     expect(out.maskedResource.birthDate).toBeUndefined();
     expect(out.maskedResource.name).toEqual('***');
     expect(out.maskedResource.address).toBeUndefined();

@@ -129,26 +129,27 @@ export async function maskViaGuard(
 }
 
 /**
- * Mask through the ENGINE directly, in a configuration where masking is
- * guaranteed to run.
+ * Mask through the ENGINE directly.
  *
- * This is not a convenience shortcut -- it is load-bearing. Today there is no
- * PhiGuard configuration that masks an IDENTIFIABLE resource at all:
+ * Still load-bearing, but for a different reason than when lane A wrote it.
  *
- *   * no user            -> strict mode BLOCKS (authorized: false)
- *   * clinician user     -> allowed, but requiresMasking is never set, so the
- *                           RAW resource comes back
- *   * mode 'trusted'     -> `enabled: false`, short-circuits entirely
+ * ON MASTER there was no PhiGuard configuration that masked an IDENTIFIABLE
+ * resource at all: no user -> blocked; clinician -> allowed but UNMASKED;
+ * 'trusted' -> protection disabled. Engine mode 'permissive' was the only mode
+ * that returned a masked identifiable resource, and it was unreachable from any
+ * valid PhiGuardConfig. Driving the engine directly was the only way to test
+ * the masking RULES separately from that authorization hole.
  *
- * Engine mode 'permissive' -- the one mode that returns a MASKED identifiable
- * resource -- is unreachable from any valid PhiGuardConfig, because
- * phi-guard.ts:18 maps 'safe' to 'strict' and everything else to 'permissive'
- * while `enabled: config.mode !== 'trusted'` kills the 'trusted' case first.
+ * AFTER THE MERGE that hole is closed. Lane E made the masking invariant
+ * structural, so 'strict' -- the mode PhiGuard actually maps 'safe' onto --
+ * now returns a properly masked IDENTIFIABLE resource for a privileged user.
+ * The default mode below is therefore 'strict', not 'permissive': a canary
+ * case that proves a surface is clean in a mode production cannot reach is
+ * proving very little.
  *
- * Driving the engine directly lets the canary test the MASKING RULES on their
- * own, separately from the authorization hole above. Without it, every canary
- * case would fail for the same single upstream reason and the suite would tell
- * the later lanes nothing about their own surfaces.
+ * The direct-engine path is kept because it isolates a rule failure from an
+ * authorization failure -- the two produce identical symptoms through the
+ * guard, and telling them apart is what makes this suite diagnostic.
  */
 export async function maskViaEngine(
   resource: unknown,
@@ -159,7 +160,7 @@ export async function maskViaEngine(
   const auditLogger = new AuditLogger(false);
   const config: PHIProtectionConfig = {
     enabled: true,
-    mode: options.mode ?? 'permissive',
+    mode: options.mode ?? 'strict',
     allowEmergencyAccess: false,
     emergencyAccessDurationMinutes: 30,
     auditAllAccess: false,

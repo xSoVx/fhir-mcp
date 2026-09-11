@@ -1,13 +1,16 @@
 import { PHILevel, User } from '../types/phi-types.js';
 
 /**
- * A valid Israeli national ID (tehudat zehut) with leading zeros, taken from
- * the IL-Core specification's own Patient example. Leading zeros are valid:
- * any detector or regex that demands a non-zero first digit will miss it.
+ * REPOINTED AT INTEGRATION (conflict 1: canary fixture triplication).
  *
- * Exported from exactly one module. Never inline the literal elsewhere.
+ * This module used to declare its own copy of the literal. Lanes A, C and D
+ * each declared one too. The G-CANARY gate requires the canary to live in
+ * exactly ONE module, so all four were consolidated into
+ * ./fixtures/canary.ts and re-exported here -- every existing importer of this
+ * file keeps working, and a grep for the literal finds one hit.
  */
-export const CANARY = '000000018';
+export { CANARY } from './fixtures/canary.js';
+import { CANARY } from './fixtures/canary.js';
 
 export const IL_NATIONAL_ID_SYSTEM = 'http://fhir.health.gov.il/identifier/il-national-id';
 

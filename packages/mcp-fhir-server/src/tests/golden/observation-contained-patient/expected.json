@@ -17,21 +17,8 @@
       {
         "resourceType": "Patient",
         "id": "p1",
-        "identifier": [
-          {
-            "system": "http://fhir.health.gov.il/identifier/il-national-id",
-            "value": "000000018"
-          }
-        ],
-        "name": [
-          {
-            "family": "Cohen"
-          }
-        ],
-        "text": {
-          "status": "generated",
-          "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\">Tamar Cohen 000000018</div>"
-        }
+        "identifier": "<<HASH>>",
+        "name": "***"
       }
     ],
     "valueQuantity": {
@@ -40,7 +27,7 @@
     }
   },
   "canaryLeaks": {
-    "plaintext": true,
+    "plaintext": false,
     "numericEntities": false,
     "base64": false
   }

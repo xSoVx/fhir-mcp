@@ -10,7 +10,7 @@ import {
   AuditMetadata
 } from '../types/phi-types.js';
 import { PHIClassifier } from './phi-classifier.js';
-import { PHIMaskingEngine } from './phi-masking-engine.js';
+import { PHIMaskingEngine, DefaultNestedMaskingRuleResolver } from './phi-masking-engine.js';
 import { AuditLogger } from './audit-logger.js';
 
 /* ==========================================================================
@@ -248,6 +248,41 @@ export class PHIAuthorizationEngine {
     this.config = config;
     this.phiClassifier = new PHIClassifier();
     this.maskingEngine = new PHIMaskingEngine();
+
+    // ----------------------------------------------------------------------
+    // The classifier seam (integration wiring; review finding 5).
+    //
+    // PHIMaskingEngine recurses into contained[] and Bundle.entry[].resource
+    // and needs rules for each nested resource's OWN resourceType. It ships
+    // DefaultNestedMaskingRuleResolver, which reads the shared
+    // RESOURCE_PHI_MATRIX / DEFAULT_MASKING_RULES tables directly. That is a
+    // FLOOR, not the real verdict: it sees only the declared base level and
+    // misses everything classifyResource() derives at runtime -- the
+    // MINIMAL -> IDENTIFIABLE upgrade on a direct identifier, the narrative
+    // policy rules, the attachment rules, and the resource-specific switch.
+    //
+    // This is the only construction site that owns both objects, so it is
+    // where the seam gets closed. classifyResource() is the classifier's
+    // public rule-selection API: requiredMasking is exactly the rule set
+    // the outer resource would receive, computed from the full analysis.
+    //
+    // Fail closed: if classification throws on a malformed nested resource,
+    // fall back to the conservative default rather than returning no rules.
+    // ----------------------------------------------------------------------
+    const classifier = this.phiClassifier;
+    const floor = new DefaultNestedMaskingRuleResolver();
+    this.maskingEngine.setRuleResolver({
+      getRulesFor(resource: any): MaskingRule[] {
+        try {
+          const rules = classifier.classifyResource(resource).requiredMasking;
+          return Array.isArray(rules) && rules.length > 0
+            ? rules
+            : floor.getRulesFor(resource);
+        } catch {
+          return floor.getRulesFor(resource);
+        }
+      }
+    });
     this.auditLogger = auditLogger;
 
     // Clean up expired emergency grants every 5 minutes

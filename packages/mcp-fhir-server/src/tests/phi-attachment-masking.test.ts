@@ -16,7 +16,7 @@ describe('Finding 6 - Attachment.data carries the document, not a pointer to it'
   let engine: PHIAuthorizationEngine;
 
   beforeEach(() => {
-    engine = createAuthEngine('permissive');
+    engine = createAuthEngine('strict');
   });
 
   test('removes attachment data but keeps contentType, size and hash', async () => {
@@ -142,12 +142,18 @@ describe('Finding 6 - Attachment.data carries the document, not a pointer to it'
     expect(fields).toContain('content.attachment.data');
   });
 
-  test('a nested attachment inside contained[] is NOT yet stripped - lane D owns recursion', async () => {
-    // Documented gap, asserted so it cannot be mistaken for coverage.
-    // The masking engine selects rules from the OUTER resource type and never
-    // recurses into contained[], so a contained DocumentReference keeps its
-    // blob. Finding 5 (phi-masking-engine.ts) fixes this; when it lands, this
-    // expectation flips and this test becomes a real canary case.
+  test('a nested attachment inside contained[] IS stripped', async () => {
+    // Lane C wrote this as a documented GAP: the masking engine selected rules
+    // from the OUTER resource type and never recursed into contained[], so a
+    // contained DocumentReference kept its blob. Lane C said in the same
+    // comment that when finding 5 landed the expectation would flip and this
+    // would become a real canary case. It has, and it is.
+    //
+    // Two things had to land for this: lane D's recursion in
+    // phi-masking-engine.ts, and the classifier seam wired at the
+    // PHIAuthorizationEngine construction site -- without the seam the nested
+    // DocumentReference is classified from the shared matrix, which carries no
+    // attachment rule, and the blob survives.
     const observation = {
       resourceType: 'Observation',
       id: 'o1',
@@ -167,6 +173,6 @@ describe('Finding 6 - Attachment.data carries the document, not a pointer to it'
 
     expect(outcome.authorized).toBe(true);
     expect(outcome.maskedResource).toBeDefined();
-    expect(serialize(outcome.maskedResource)).toContain(CANARY_BASE64);
+    expect(serialize(outcome.maskedResource)).not.toContain(CANARY_BASE64);
   });
 });

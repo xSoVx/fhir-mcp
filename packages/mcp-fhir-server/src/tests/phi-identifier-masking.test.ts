@@ -17,7 +17,7 @@ describe('Finding 1 - identifier masking is unconditional', () => {
 
   beforeEach(() => {
     classifier = new PHIClassifier();
-    engine = createAuthEngine('permissive');
+    engine = createAuthEngine('strict');
   });
 
   test('hashes Patient.identifier', async () => {

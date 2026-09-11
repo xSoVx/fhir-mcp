@@ -2,16 +2,12 @@
   "masked": {
     "resourceType": "Patient",
     "id": "golden-narrative",
-    "text": {
-      "status": "generated",
-      "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\"><b>Tamar Cohen</b> ID 000000018<br/>&#x5DB;&#x5D4;&#x5DF; &#x30;&#x30;&#x30;&#x30;&#x30;&#x30;&#x30;&#x31;&#x38;</div>"
-    },
     "identifier": "<<HASH>>",
     "name": "***"
   },
   "canaryLeaks": {
-    "plaintext": true,
-    "numericEntities": true,
+    "plaintext": false,
+    "numericEntities": false,
     "base64": false
   }
 }
