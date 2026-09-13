@@ -2,6 +2,13 @@
 
 This guide provides ready-to-use prompts and patterns for working with FHIR-MCP tools effectively.
 
+> **Before you use these prompts, four behaviours will change what comes back.**
+>
+> 1. **Identity is required.** Without `MCP_SERVICE_PRINCIPAL_ID` configured, every IDENTIFIABLE read returns `HEALTHCARE_COMPLIANCE_VIOLATION` and no resource body. None of the patterns below will return data. See [QUICKSTART.md](QUICKSTART.md#identity-is-required-for-phi).
+> 2. **Identifiers come back as `PT_` tokens**, not values — and those tokens change on every server restart. A prompt that asks the model to remember or correlate an id across sessions will silently correlate the wrong things.
+> 3. **`birthDate` is removed, not partially masked.** Any template computing an age from it will render empty.
+> 4. **Free text is not masked on Condition, MedicationRequest, Procedure, CarePlan or DiagnosticReport.** Prompts that surface `note[]`, `code.text` or `description` from those types can surface a patient name straight into the model context. See [SECURITY.md](SECURITY.md#2-free-text-unmasked-on-several-clinical-resource-types).
+
 ## System Prompt
 
 Add this to your LLM system prompt:
@@ -28,7 +35,7 @@ You can access FHIR data and HL7 terminology through FhirMCP tools. Follow these
   "arguments": {
     "resourceType": "Patient",
     "id": "{{patient_id}}",
-    "elements": ["id", "gender", "age", "maritalStatus"]
+    "elements": ["id", "gender", "maritalStatus"]
   }
 }
 ```
@@ -193,7 +200,7 @@ You can access FHIR data and HL7 terminology through FhirMCP tools. Follow these
 ```
 **Patient Summary** (Safe Mode - PHI Protected)
 - Gender: {{gender}}
-- Age: {{calculated_age}} years  
+- Age: not derivable -- birthDate is removed by masking, not partially masked
 - Last Visit: {{encounter.period.start | date}}
 
 **Recent Vitals** ({{observation.effectiveDateTime | date}})
@@ -202,9 +209,9 @@ You can access FHIR data and HL7 terminology through FhirMCP tools. Follow these
 - Temperature: {{temp}}°F
 
 **Active Conditions**
-- {{condition.code.text}} (since {{condition.onsetDateTime | date}})
+- {{condition.code.text}}  <!-- WARNING: Condition.code.text and note[] are NOT masked (open issue 2). May contain a patient name. -->
 
-*Note: Personal identifiers masked for privacy*
+*Note: identifiers and ids replaced with per-process `PT_` pseudonym tokens; name masked; birthDate, telecom and address removed. Tokens are NOT stable across server restarts.*
 ```
 
 ### Code Explanation Template
@@ -269,16 +276,23 @@ No {{resourceType}} records found matching: {{search_criteria}}
 - Provide helpful error messages for schema validation failures
 
 ### PHI Protection
-- Never display full names, addresses, SSNs, or exact birth dates
-- Use age instead of birth date when possible
-- Reference patients by ID only in subsequent searches
-- Redact contact information in summaries
+
+In `safe` mode the server has already applied these before the model sees anything — these guidelines are about not undoing that.
+
+- Never display full names, addresses or contact details; in `safe` mode they arrive as `***` or absent already
+- **Do not ask for or compute an age.** `birthDate` is removed outright, so there is nothing to derive one from
+- Reference patients by the returned `PT_` token only. **Do not treat a token as a durable identifier** — it is per-process and changes on restart, so carrying one across sessions correlates the wrong patient
+- **Treat free text from Condition, MedicationRequest, Procedure, CarePlan and DiagnosticReport as unmasked.** `note[]`, `code.text`, `dosageInstruction[].text`, `report[].display`, `description` and `presentedForm[].title` are not covered by the masking rules (open issue 2), so a name or ID can arrive in them intact. Observation and Encounter are clean.
+- `DocumentReference` cannot be read or searched at all — it is missing from the validator's resource-type allowlist
 
 ### Audit Awareness
-- All tool calls are automatically logged
-- Operation metadata is captured (but PHI is redacted)
-- Failed operations generate audit events
+
+- All tool calls are logged, including **denied** reads
+- Metadata passes a structural allowlist, so unanticipated keys are dropped rather than logged
+- Failed operations generate audit events; the error **class** is recorded, never the message
 - Trace IDs link related operations together
+- Records go to stderr by default (stdout is the MCP protocol channel)
+- **Caveat:** the `resourceIdHash` field is an unsalted SHA-256 truncated to 16 hex and is reversible for real patient ids. Treat audit logs as PHI-bearing.
 
 ## Advanced Patterns
 
@@ -298,6 +312,8 @@ for (const patient of patients.entries) {
 }
 ```
 
+
+> **This pattern does not work in `safe` mode.** `patient.id` in a masked search result is a `PT_` pseudonym token, not the server-side id, so `Patient/PT_...` will not resolve upstream. Chained queries that feed a masked id back into a search need the real id, which masking is specifically designed not to give you. Either scope the second search by a parameter the server can resolve, or run chained retrieval before masking on a trusted path.
 ### Longitudinal Data Analysis
 ```javascript
 // Get trend data over time

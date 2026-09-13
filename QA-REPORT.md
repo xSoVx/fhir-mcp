@@ -1,213 +1,127 @@
-# FHIR-MCP Server - Comprehensive QA Test Report
+# FHIR-MCP Server — Test and QA Status
 
-## Executive Summary
+**Branch:** `integration/phase2` (lanes A–I merged)
+**Method:** `npm run test:gate` in `packages/mcp-fhir-server`, which runs the jest suite and checks the result against `test-baseline.json`.
 
-✅ **PASS** - All core functions have been thoroughly tested and pass QA requirements.
+## Summary
 
-**Test Results:** 19/19 tests passed (100% success rate)
-**Issues Found:** 1 bug identified and fixed
-**Overall Assessment:** EXCELLENT - Production ready
+| | |
+|---|---|
+| **Tests** | **250 passed, 8 failed, 258 total** |
+| **Suites** | 12 passed, 2 failed, 14 total |
+| **Regressions** | 0 |
+| **Known failures** | 8, all enumerated with reasoning in `test-baseline.json` |
+| **Assessment** | Not production ready. Four known open security issues, one a live PHI exposure. |
 
-## Test Coverage
+## Correction: the previous "19/19 (100%)" claim
 
-### 1. Static Code Analysis ✅
-- **Null/Undefined Safety**: PASS - Good use of optional chaining
-- **Error Handling Completeness**: PASS - Consistent try-catch patterns
-- **Input Validation Coverage**: PASS - Comprehensive Zod schemas
-- **Async/Await Pattern Check**: PASS - Proper async patterns with timeouts
+Earlier revisions of this report, and of `README.md`, stated:
 
-### 2. Core Function Testing ✅
+> **Test Results:** 19/19 tests passed (100% success rate)
+> **Overall Assessment:** EXCELLENT - Production ready
+> **Overall Grade: A+ (Excellent)**
+> **Test Coverage: 100%**
 
-#### FHIR Provider Functions (`fhir-provider.ts`)
-- ✅ `getCapabilities()` - Fetches FHIR server capabilities
-- ✅ `search()` - FHIR resource search with parameters, pagination, field selection
-- ✅ `read()` - Read specific FHIR resources by ID
-- ✅ `create()` - Create new FHIR resources
-- ✅ `update()` - Update existing FHIR resources with version control
+**That figure was not obtainable.** The jest suite could not execute at all under ESM until lane A repaired the runner — commit `edbceca`, "T0.1: repair jest under ESM so the test suite actually executes." There was no automated suite producing a pass rate at the time the claim was written, and no coverage measurement behind the "100% coverage" line. Both numbers should be treated as withdrawn rather than superseded.
 
-#### Terminology Provider Functions (`terminology-provider.ts`)
-- ✅ `expand()` - ValueSet expansion with filtering and pagination
-- ✅ `lookup()` - CodeSystem lookup with property extraction
-- ✅ `translate()` - ConceptMap translation between code systems
+The same report's headline bug fix compounds the problem. It recorded, as a resolved CRITICAL issue:
 
-#### PHI Guard Security Functions (`phi-guard.ts`)
-- ✅ `maskResource()` - PHI masking in safe/trusted modes
-- ✅ `removeField()` - Selective field removal
-- ✅ `maskField()` - Field-level masking
-- ✅ `applySafeguards()` - Standard PHI protection patterns
-- ✅ `maskName()` - Name masking for patient privacy
-- ✅ `maskAddress()` - Address masking for location privacy
+> **Resolution**: Updated sensitive fields array in `audit-logger.ts:76` from `'birthDate'` to `'birthdate'` to match lowercase comparison.
+> **Status**: ✅ FIXED and verified
 
-#### Audit Logger Functions (`audit-logger.ts`)
-- ✅ `log()` - Structured audit event logging
-- ✅ `logFhirOperation()` - FHIR-specific audit logging
-- ✅ `logTerminologyOperation()` - Terminology operation auditing
-- ✅ `generateTraceId()` - Unique trace ID generation
-- ✅ `redactSensitiveData()` - Sensitive data redaction *(fixed bug)*
+The mechanism being repaired there was a keyword **denylist** (`token|authorization|password|secret|ssn|birthdate`) applied to the top level of audit metadata only. A live run against a real FHIR server later wrote given names, family names and a nine-digit national ID into the audit log in clear text, because `name`, `identifier` and `id` were never on that list — and, as the replacement code now records in `audit-logger.ts:244-265`, `birthdate` *was* redacted, "which is precisely what made the control look like it was working."
 
-#### MCP Tools Integration (`fhir-tools.ts`, `terminology-tools.ts`)
-- ✅ Tool schema definitions and validation
-- ✅ Request handling with comprehensive error management
-- ✅ Response formatting for MCP protocol
-- ✅ Integration with security and audit components
+The denylist has since been replaced with a recursive structural **allowlist**. The lesson worth carrying forward is that the original QA pass verified the control against the cases the control already knew about, declared 100%, and shipped.
 
-### 3. Security Feature Testing ✅
+## Known failures (8)
 
-#### PHI Protection
-- ✅ Names automatically masked (given/family names → '***')
-- ✅ Birth dates converted to age calculations
-- ✅ Addresses masked (lines/city/postal → '***MASKED***')
-- ✅ Government identifiers filtered (SSN, national IDs removed)
-- ✅ Telecom values masked
-- ✅ Configurable trusted/safe modes
+Full per-entry reasoning and ownership is in `packages/mcp-fhir-server/test-baseline.json`. Summary:
 
-#### Audit Security
-- ✅ Sensitive fields redacted in audit logs
-- ✅ Token/authorization headers protected
-- ✅ Password fields redacted
-- ✅ Secret keys protected
-- ✅ Birth date information redacted
-- ✅ Trace ID generation for request tracking
+### Group 1 — the `PHILevel.MINIMAL` design question (3 tests)
 
-### 4. Configuration Testing ✅
-- ✅ Environment variable support (6 variables)
-- ✅ Sensible default configurations
-- ✅ FHIR_BASE_URL configuration
-- ✅ TERMINOLOGY_BASE_URL configuration  
-- ✅ PHI_MODE configuration
-- ✅ ENABLE_AUDIT configuration
+| Test |
+|---|
+| `PHI Protection System › PHI Classification › should classify Organization resource as MINIMAL` |
+| `PHI Protection System › PHI Authorization Engine › should allow masked access to minimal PHI resources` |
+| `PHI Protection System › Integration Tests › should handle mixed resource bundles correctly` |
 
-## Issues Found and Resolved
+`phi-classifier.ts:109-110` sets `hasDirectIdentifiers` when a key is `identifier` **or** `id`; line 159 then upgrades `MINIMAL` → `IDENTIFIABLE`. The fixture Organization carries `id: 'org-123'`, so it classifies as `identifiable`, the unprivileged test user is denied, and the bundle returns 1 entry instead of 2. Tests two and three are strictly downstream of test one.
 
-### Bug Fix: Audit Logger Birth Date Redaction
-**Issue**: `birthDate` fields were not being redacted in audit logs due to case sensitivity mismatch.
+These are **quarantined pending an open design question, not left unfixed**: is a logical `id` on a non-Patient resource a direct identifier? Narrowing the rule reduces protection; keeping it makes `PHILevel.MINIMAL` unreachable dead code. No lane owned that decision and it was deliberately not taken during the merge. Lane C owned `phi-classifier.ts` and did not change the upgrade rule; lane E's authorization fix closed unmasked-ALLOW paths and this is a DENY, so neither flipped it.
 
-**Root Cause**: The sensitive field array contained `'birthDate'` but the comparison was done against `'birthdate'` (lowercase).
+### Group 2 — pre-existing, outside the PHI remediation plan (5 tests)
 
-**Resolution**: Updated sensitive fields array in `audit-logger.ts:76` from `'birthDate'` to `'birthdate'` to match lowercase comparison.
+| Test | Note |
+|---|---|
+| `Security Integration Tests › Input Validation › should sanitize potentially harmful input` | Sanitized output still contains the rejected substring |
+| `Security Integration Tests › Rate Limiting › should block excessive requests` | Rate-limiter behaviour disagreement |
+| `Security Integration Tests › Rate Limiting › should detect suspicious rapid-fire requests` | Rate-limiter behaviour disagreement |
+| `Security Integration Tests › Security Headers › should detect suspicious requests` | Security-headers behaviour disagreement |
+| `Security Integration Tests › Security Middleware Integration › should enforce rate limits across middleware` | Downstream of the rate-limiter failures |
 
-**Impact**: CRITICAL - PHI could have been exposed in audit logs
-**Status**: ✅ FIXED and verified
+All five are unassigned and need their own triage. Two of them mean the rate limiter does not demonstrably block anything under test; the README's rate-limiting claims should be read with that in mind.
 
-## Architecture Assessment
+## The baseline gate
 
-### Strengths ✅
-- **Separation of Concerns**: Clean separation between providers, security, tools, and types
-- **Input Validation**: Comprehensive Zod schemas prevent invalid requests
-- **Security-First Design**: Built-in PHI protection and audit logging
-- **Error Handling**: Consistent async/await patterns with proper error propagation
-- **Configurability**: Environment-based configuration for different deployments
-- **TypeScript**: Strong typing throughout the codebase
-- **Standards Compliance**: Follows FHIR R4 and MCP protocol specifications
+`scripts/check-test-baseline.mjs` enforces `test-baseline.json` in **both** directions:
 
-### Recommendations 💡
-1. **Null Safety**: Consider adding more null safety checks in array operations
-2. **Timeout Handling**: Consider adding timeout handling for external API calls *(already implemented with 30s axios timeout)*
-3. **Unit Tests**: Add comprehensive unit test suite for CI/CD pipeline
-4. **Integration Tests**: Expand E2E test coverage for edge cases
+- a test that fails and is not listed → CI fails (regression)
+- a test that is listed and now passes → CI fails (prune the entry)
 
-## Function-by-Function Analysis
+The second direction is what prevents the file from degrading into a blanket suppression. Remove an entry in the same commit as its fix.
 
-### Core FHIR Provider (`packages/mcp-fhir-server/src/providers/fhir-provider.ts`)
-| Function | Lines | Purpose | Test Status |
-|----------|--------|---------|------------|
-| `constructor()` | 8-19 | Initialize axios client with auth | ✅ PASS |
-| `getCapabilities()` | 21-24 | Fetch server metadata | ✅ PASS |
-| `search()` | 26-66 | Resource search with params | ✅ PASS |
-| `read()` | 68-77 | Read resource by ID | ✅ PASS |
-| `create()` | 79-82 | Create new resource | ✅ PASS |
-| `update()` | 84-92 | Update existing resource | ✅ PASS |
+## What is actually covered
 
-### Terminology Provider (`packages/mcp-fhir-server/src/providers/terminology-provider.ts`)
-| Function | Lines | Purpose | Test Status |
-|----------|--------|---------|------------|
-| `constructor()` | 8-19 | Initialize terminology client | ✅ PASS |
-| `expand()` | 21-38 | ValueSet expansion | ✅ PASS |
-| `lookup()` | 40-75 | CodeSystem lookup | ✅ PASS |
-| `translate()` | 77-122 | ConceptMap translation | ✅ PASS |
+14 jest suites, run against `src/` via ts-jest:
 
-### PHI Security Guard (`packages/mcp-fhir-server/src/security/phi-guard.ts`)
-| Function | Lines | Purpose | Test Status |
-|----------|--------|---------|------------|
-| `maskResource()` | 11-34 | Main PHI masking entry point | ✅ PASS |
-| `removeField()` | 36-46 | Remove specified fields | ✅ PASS |
-| `maskField()` | 48-61 | Mask specific field values | ✅ PASS |
-| `applySafeguards()` | 63-124 | Apply standard PHI protections | ✅ PASS |
-| `maskName()` | 126-133 | Mask patient names | ✅ PASS |
-| `maskAddress()` | 135-141 | Mask address information | ✅ PASS |
+| Suite | Covers |
+|---|---|
+| `phi-canary.test.ts` | One planted canary value traced through every element a FHIR resource can hide an identifier in; asserts the leaky path ran before asserting the leak is closed |
+| `phi-reidentification.test.ts` | Uniform `id` / `Reference.reference` tokenization across clinical types |
+| `phi-fail-closed.test.ts` | Guard construction and denial paths |
+| `phi-authz-invariant.test.ts` | Structural invariant: any `allowed: true` at IDENTIFIABLE+ carries a non-empty rule set |
+| `phi-authz-canary.test.ts` | Role × mode × PHI-level sweep against the canary |
+| `phi-masking-nested.test.ts` | `contained[]` and `Bundle.entry[].resource` recursion |
+| `phi-masking-pseudonym.test.ts` | `PT_` token derivation and stability within a session |
+| `phi-masking-cache.test.ts` | Bounded, expiring pseudonym cache |
+| `phi-identifier-masking.test.ts` | Unconditional `identifier` masking |
+| `phi-attachment-masking.test.ts` | `Attachment.data` removal, retained metadata |
+| `phi-narrative-masking.test.ts` | `text.div` policy |
+| `phi-protection.test.ts` | Classification and end-to-end integration |
+| `golden-corpus.test.ts` | Replayed golden files |
+| `security-integration.test.ts` | Validation, rate limiting, headers, middleware (5 of the 8 known failures live here) |
 
-### Audit Logger (`packages/mcp-fhir-server/src/security/audit-logger.ts`)
-| Function | Lines | Purpose | Test Status |
-|----------|--------|---------|------------|
-| `log()` | 20-36 | Generic audit logging | ✅ PASS |
-| `logFhirOperation()` | 38-54 | FHIR operation auditing | ✅ PASS |
-| `logTerminologyOperation()` | 56-68 | Terminology operation auditing | ✅ PASS |
-| `generateTraceId()` | 70-72 | Generate unique trace IDs | ✅ PASS |
-| `redactSensitiveData()` | 74-86 | Redact sensitive audit data | ✅ PASS *(fixed)* |
+Plus standalone scripts outside jest: `scripts/lane-g-authz-leak-probe.mjs`, `scripts/lane-g-runtime-leak-probe.mjs`, `scripts/lane-h-e2e.mjs`, `test-basic-functionality.js`, `manual-qa-test.js`, `tests/e2e/test-fhir-mcp.js`.
 
-## Security Verification
+## What is not covered
 
-### PHI Protection Test Results
-- ✅ Patient names masked in safe mode
-- ✅ Birth dates converted to age 
-- ✅ Addresses completely masked
-- ✅ Government IDs filtered out
-- ✅ Telecom information protected
-- ✅ Trusted mode preserves original data
-- ✅ Recursive masking of nested objects
+- **No coverage measurement is reported here.** `npm run test:coverage` exists; no threshold is enforced and no figure is claimed. The previous "100%" was unsubstantiated.
+- **The suite does not test the deployed artifact.** Jest runs against `src/`; `package.json` `main`/`bin`, `npm start`, `npm run start:http` and the Dockerfile all consume `dist/`, which is gitignored. A green run says nothing about a stale `dist/`. Run `npm run build` before testing runtime behaviour.
+- **No test covers the four open security issues below** — that is what makes them open.
+- No penetration testing, dependency scanning or container scanning results are recorded on this branch.
 
-### Audit Security Test Results  
-- ✅ Authorization tokens redacted
-- ✅ Password fields protected
-- ✅ Secret keys masked
-- ✅ Birth date information redacted *(fixed)*
-- ✅ Normal fields preserved
-- ✅ Structured JSON audit format
+## Open security issues
 
-## Performance Considerations
+Carried here from `README.md` so this report cannot be read as a clean bill of health.
 
-- ✅ 30-second HTTP timeouts configured
-- ✅ Efficient URL parameter construction
-- ✅ Minimal PHI processing overhead
-- ✅ Streamlined audit log structure
-- ✅ Memory-efficient object masking
+1. **`resourceIdHash` is reversible.** `AuditLogger.hashIdentifier` is unsalted, unkeyed `sha256` truncated to 16 hex (`audit-logger.ts:235-238`). A live patient id was recovered from a log line by direct comparison with `sha256(id)`. The repository's own canary module defines the identical construction as `LEGACY_UNSALTED_SHA256` and calls it "equivalent to publishing the ID" (`tests/fixtures/canary.ts:298-310`).
+2. **Free text unmasked on Condition, MedicationRequest, Procedure, CarePlan, and partially DiagnosticReport.** Those types have no `case` arm in `getResourceSpecificMaskingRules()`. Observation and Encounter are clean — this is inconsistency between rule sets, not uniform absence.
+3. **`resourceType` is echoed verbatim into audit logs** on an unauthenticated, pre-validation denial path (`fhir-tools.ts:335` → `security-middleware.ts:432,437`). Allowlisted values are length-bounded but not character-filtered: a log-injection channel.
+4. **`PHILevel.MINIMAL` unreachable** — the open design question above.
 
-## Compliance Assessment
+## Assessment
 
-### HIPAA/PHI Compliance ✅
-- Patient identifiers properly masked
-- Birth dates handled appropriately
-- Address information protected
-- Audit trail maintained
-- Configurable security levels
+**Not production ready.** The PHI remediation lanes closed a substantial set of real leaks and, importantly, built the harness (canary fixtures, golden corpus, enforced baseline) that makes the remaining ones visible. But masking was unreachable in production until lane H, three PHI log leaks were open until lane G, and issue 1 is a live exposure today.
 
-### FHIR R4 Compliance ✅
-- Proper FHIR REST operations
-- Correct search parameter handling
-- Standard resource formatting
-- CapabilityStatement support
+Recommended before any deployment against real patient data:
 
-### MCP Protocol Compliance ✅
-- Tool schema definitions
-- Request/response format
-- Error handling patterns
-- Content type specifications
-
-## Conclusion
-
-**Overall Grade: A+ (Excellent)**
-
-The FHIR-MCP server demonstrates excellent software engineering practices with comprehensive security features, robust error handling, and clean architecture. All core functions pass rigorous testing, and the single identified bug has been resolved.
-
-**Readiness Assessment:** ✅ PRODUCTION READY
-
-**Next Steps:**
-1. Add comprehensive unit test suite
-2. Expand E2E integration tests  
-3. Add performance benchmarking
-4. Consider additional PHI protection patterns
+1. Key the audit identifier hash (HMAC with a per-deployment secret), and delete the "not a reversible identifier" docstring.
+2. Add `case` arms for Condition, MedicationRequest, Procedure and CarePlan, and extend DiagnosticReport to `presentedForm[].title` / `.url`.
+3. Validate or hash `resourceType` before it reaches the audit writer.
+4. Decide the `MINIMAL` question, then either fix the classifier or delete the level and update the three tests.
+5. Triage the five pre-existing failures, starting with the two showing the rate limiter blocking nothing.
+6. Add a `dist/`-freshness check to CI so a stale build cannot pass as a tested one.
 
 ---
-*QA Report Generated: September 12, 2025*
-*Tested Functions: 25 core functions across 6 modules*
-*Test Coverage: 100%*
+
+*Status verified by running `npm run test:gate` on `integration/phase2`. Superseded figures from the September 12, 2025 revision of this report are corrected above rather than deleted, so the discrepancy stays visible.*

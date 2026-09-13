@@ -2,6 +2,12 @@
 
 This guide explains how to connect various AI assistants and tools to your FHIR-MCP server for healthcare data analysis and clinical decision support.
 
+> **Three things to get right before any of these integrations return data.**
+>
+> 1. **Run `npm run build`.** Every example below points at `dist/`, which is gitignored. It is also what the Dockerfile and `npm start` load, while the test suite runs against `src/` — so a green CI run does not mean `dist/` is current.
+> 2. **Configure a caller principal.** Set `MCP_SERVICE_PRINCIPAL_ID` and `MCP_SERVICE_PRINCIPAL_SCOPES` alongside `PHI_MODE`. Without them the server starts, answers `fhir.capabilities` and terminology calls, and denies **every** IDENTIFIABLE read with `HEALTHCARE_COMPLIANCE_VIOLATION`. Several examples in this guide predate that requirement and set only `PHI_MODE`; add the principal variables to each.
+> 3. **Understand what reaches the model.** Identifiers and ids arrive as per-process `PT_` tokens that change on restart; `name` is `***`; `birthDate` is absent. Free text on Condition, MedicationRequest, Procedure, CarePlan and DiagnosticReport is **not** masked and can carry a patient name into the model's context. See [SECURITY.md](SECURITY.md#-known-open-security-issues).
+
 ## 🤖 GitHub Copilot Integration
 
 ### Method 1: VS Code Extension with MCP Support
@@ -28,7 +34,9 @@ export class FhirMcpBridge {
             env: {
                 ...process.env,
                 FHIR_BASE_URL: vscode.workspace.getConfiguration('fhirMcp').get('fhirUrl'),
-                PHI_MODE: 'safe'
+                PHI_MODE: 'safe',
+                MCP_SERVICE_PRINCIPAL_ID: 'copilot-bridge',
+                MCP_SERVICE_PRINCIPAL_SCOPES: 'system/*.read'
             }
         });
     }
@@ -511,11 +519,15 @@ print(f"Code meaning: {result.get('display', 'Unknown')}")
 
 ## 🔐 Security Considerations
 
-1. **PHI Protection**: Always use `PHI_MODE=safe` for AI integrations
-2. **Network Security**: Use HTTPS for all HTTP bridges
-3. **Authentication**: Implement proper auth for production deployments
-4. **Audit Logging**: Monitor all AI assistant interactions
-5. **Rate Limiting**: Implement rate limits to prevent abuse
+1. **PHI mode** — always use `PHI_MODE=safe` for AI integrations. `trusted` returns resources unmasked.
+2. **Configure a principal** — `MCP_SERVICE_PRINCIPAL_ID` plus `MCP_SERVICE_PRINCIPAL_SCOPES`. Grant the narrowest scope that works; `system/*.read` is read-only, and write scopes are separate. `x-restricted/*.read` (Coverage, Claim, ExplanationOfBenefit, Bundle, Binary) never rides along with a read scope — request it only if you need that tier.
+3. **Network security** — the server speaks plain HTTP. Terminate TLS in front of it and restrict access to the port.
+4. **HTTP authentication is a shared secret** — `AUTH_TOKEN` is one static bearer token with no expiry, no rotation and no per-user attribution. **If it is unset the bridge accepts unauthenticated requests.** There is no OAuth2, SMART on FHIR, PKCE or client-credentials support in this repository, despite what earlier documentation claimed; `identity.ts` defines the seam a real token issuer would plug into later.
+5. **Audit logging** — every allowed *and* denied operation is recorded, on stderr by default. Ship and retain that stream; the server does not. Note that the `resourceIdHash` field is currently reversible (unsalted SHA-256 truncated to 16 hex), so treat audit logs as PHI-bearing until that is fixed.
+6. **Rate limiting** — present, with a one-minute window per bucket (100 general, 50 search, 20 PHI, 10 write). Thresholds are compiled in, not configurable by environment variable. Two rate-limiter tests currently fail, so verify the behaviour against your own traffic rather than assuming it.
+7. **Do not cache `PT_` tokens** — they are per-process and change on restart. An assistant that stores them as patient keys will merge or split records silently.
+8. **Free text is a live gap** — `note[]`, `code.text`, `dosageInstruction[].text`, `report[].display`, `description` and `presentedForm[].title`/`.url` are unmasked on Condition, MedicationRequest, Procedure, CarePlan and DiagnosticReport. If your integration summarises clinical notes, assume identifiers can reach the model.
+9. **Rebuild before deploying** — a stale `dist/` runs pre-remediation masking code while tests pass.
 
 ## 📊 Monitoring AI Usage
 

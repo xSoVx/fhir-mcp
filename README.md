@@ -4,171 +4,365 @@
 [![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-FHIR-MCP is an open-source MCP (Model Context Protocol) server that enables LLMs to securely interact with FHIR servers and HL7 terminology services. It provides a comprehensive toolset for healthcare interoperability with enterprise-grade security hardening, PHI protection, audit logging, and token-efficient operations.
+FHIR-MCP is an open-source MCP (Model Context Protocol) server that lets LLMs interact with FHIR servers and HL7 terminology services behind a PHI de-identification layer. It provides FHIR read/search/create/update, terminology operations, PHI classification and masking, and audit logging.
+
+> **Status: pre-production.** This branch (`integration/phase2`) carries nine lanes of PHI remediation (A–I) that closed a set of leaks found by a live audit against a real FHIR server. Several of those leaks were open in every release before this branch. There remain **four known open security issues** — see [Known open issues](#-known-open-issues) — one of which (reversible audit id hashing) is a live PHI exposure. Read that section before deploying against real patient data.
 
 ## ✨ Features
 
-- 🔐 **Enterprise Security**: OWASP-compliant hardening with multi-tier rate limiting
-- 🛡️ **PHI Protection**: Advanced masking, classification, and redaction of sensitive healthcare data
-- 📊 **Comprehensive FHIR Support**: Read, search, create, and update operations
-- 🏥 **HL7 Terminology**: ValueSet expansion, CodeSystem lookup, and concept translation
-- 📝 **Audit Logging**: HIPAA-compliant audit trail with structured logging and trace IDs
-- ⚡ **Token Efficient**: Field selection, pagination, and optimized queries
-- 🔧 **Interoperable**: Works with HAPI FHIR, Firely, and other R4/R4B servers
-- ✅ **Production Ready**: Security hardening Phase 1 complete with comprehensive validation
-- 🌐 **HTTP Bridge**: Secure REST API with Docker containerization support
-- 🔒 **Modern Architecture**: ES modules, TypeScript, and cloud-native deployment
+- 🛡️ **PHI protection**: rule-driven classification and masking, pseudonym tokens, fail-closed authorization
+- 📊 **FHIR operations**: read, search, create, update
+- 🏥 **HL7 terminology**: ValueSet expansion, CodeSystem lookup, concept translation
+- 📝 **Audit logging**: structured JSON records with trace IDs, emitted on stderr by default
+- 🔐 **Security hardening**: OWASP security headers, multi-tier rate limiting, Joi input validation
+- ⚡ **Token efficient**: field selection (`elements`), pagination
+- 🔧 **Interoperable**: works with HAPI FHIR, Firely and other R4/R4B servers
+- 🌐 **HTTP bridge**: REST API example with Docker packaging
+- 🔒 **Modern architecture**: ES modules, TypeScript
+
+## ⚠️ Breaking change on this branch: identity is required for PHI
+
+Before lane H, the tool layer built its `SecurityContext` without a `userId`. The measured effect against a live FHIR server was that **every IDENTIFIABLE resource was suppressed before masking**, so the masking engine never ran in production at all.
+
+Lane H added `src/security/identity.ts` and wired a caller identity through. The consequence you will hit immediately:
+
+**Without a configured principal, every read of an IDENTIFIABLE or RESTRICTED resource is denied with `HEALTHCARE_COMPLIANCE_VIOLATION` and returns no resource body.**
+
+This is deliberate and it is fail-closed: `performComplianceChecks` (`src/security/security-middleware.ts`) blocks the request when `context.userId` is absent at those PHI levels. An unconfigured deployment behaves exactly as the old one did — denied — rather than quietly returning unmasked data.
+
+To get resource bodies back, configure a service principal:
+
+```bash
+# PowerShell
+$env:MCP_SERVICE_PRINCIPAL_ID = "svc-analytics"
+$env:MCP_SERVICE_PRINCIPAL_SCOPES = "system/*.read"
+
+# bash
+export MCP_SERVICE_PRINCIPAL_ID="svc-analytics"
+export MCP_SERVICE_PRINCIPAL_SCOPES="system/*.read"
+```
+
+See [Authentication & authorization](#-authentication--authorization) for the full scope table and the transport-specific rules.
 
 ## 🚀 Quick Start
 
-1. **Install dependencies:**
+1. **Install dependencies** (from the repository root — this is an npm workspace):
+
    ```bash
    npm install
    ```
 
-2. **Build the project:**
+2. **Build.** `dist/` is gitignored but load-bearing at runtime — see [The build trap](#-the-build-trap). This step is not optional.
+
    ```bash
    npm run build
    ```
 
-3. **Configure environment:**
+3. **Configure.**
+
    ```bash
+   # bash
    export FHIR_BASE_URL="https://hapi.fhir.org/baseR4"
    export TERMINOLOGY_BASE_URL="https://tx.fhir.org/r4"
    export PHI_MODE="safe"
+   export MCP_SERVICE_PRINCIPAL_ID="svc-analytics"
+   export MCP_SERVICE_PRINCIPAL_SCOPES="system/*.read"
+   ```
+
+   ```powershell
+   # PowerShell
+   $env:FHIR_BASE_URL = "https://hapi.fhir.org/baseR4"
+   $env:TERMINOLOGY_BASE_URL = "https://tx.fhir.org/r4"
+   $env:PHI_MODE = "safe"
+   $env:MCP_SERVICE_PRINCIPAL_ID = "svc-analytics"
+   $env:MCP_SERVICE_PRINCIPAL_SCOPES = "system/*.read"
    ```
 
 4. **Start the server:**
+
    ```bash
    cd packages/mcp-fhir-server
    npm start
    ```
 
-5. **Test functionality:**
+5. **Smoke test:**
+
    ```bash
    node test-basic-functionality.js
    ```
 
+## ⚙️ The build trap
+
+`dist/` is in `.gitignore` (line 8), and it is what actually runs:
+
+| Consumer | Path |
+|---|---|
+| `packages/mcp-fhir-server/package.json` `main` | `dist/index.js` |
+| `packages/mcp-fhir-server/package.json` `bin.fhir-mcp` | `dist/index.js` |
+| `npm start` | `node dist/index.js` |
+| `npm run start:http` | `node dist/http.js` |
+| `Dockerfile` runtime stage | copies `packages/*/dist` from the builder |
+| MCP client config (below) | `.../dist/index.js` |
+
+Jest, meanwhile, runs against `src/` via ts-jest. **A green test suite therefore says nothing about the deployed path.** `npm run build` is mandatory before deploying, before testing runtime behaviour, and after every pull that touches `src/`. A stale `dist/` will happily serve the pre-remediation masking code while the tests pass.
+
+## 🪟 Windows note: `npm run start:http` is broken on PowerShell
+
+`packages/mcp-fhir-server/package.json` defines:
+
+```
+"start:http": "MCP_TRANSPORT=http PORT=8080 node dist/http.js"
+```
+
+That `VAR=value command` prefix is POSIX-shell syntax. On PowerShell it fails — PowerShell parses `MCP_TRANSPORT=http` as a command name. Every `VAR=... npm ...` line in this repository's docs has the same problem on Windows. Until the script is made portable (as `scripts/run-jest.mjs` already was for the test runner), use:
+
+```powershell
+$env:MCP_TRANSPORT = "http"
+$env:PORT = "8080"
+node dist/http.js
+```
+
+or `cmd /c "set MCP_TRANSPORT=http && set PORT=8080 && node dist/http.js"`.
+
 ## 🛠️ Available Tools
 
 ### FHIR Operations
-- `fhir.capabilities` - Get server capability statement
-- `fhir.search` - Search resources with advanced filtering
-- `fhir.read` - Read specific resources by ID
-- `fhir.create` - Create new FHIR resources
-- `fhir.update` - Update existing resources
+
+- `fhir.capabilities` — get server capability statement
+- `fhir.search` — search resources with filtering and pagination
+- `fhir.read` — read a resource by ID
+- `fhir.create` — create a resource
+- `fhir.update` — update a resource
 
 ### Terminology Services
-- `terminology.lookup` - Look up code properties and display names
-- `terminology.expand` - Expand ValueSets to get contained codes
-- `terminology.translate` - Translate codes between coding systems
+
+- `terminology.lookup` — look up code properties and display names
+- `terminology.expand` — expand ValueSets
+- `terminology.translate` — translate codes between systems
 
 ## 📁 Project Structure
 
 ```
 packages/
-├── mcp-fhir-server/     # Main MCP server implementation
+├── mcp-fhir-server/         # Main MCP server
 │   ├── src/
-│   │   ├── providers/   # FHIR and terminology providers
-│   │   ├── security/    # PHI guard and audit logging
-│   │   ├── tools/       # MCP tool handlers and schemas
-│   │   └── types/       # TypeScript definitions
-│   └── dist/           # Compiled JavaScript (ES modules)
+│   │   ├── providers/       # FHIR and terminology HTTP clients
+│   │   ├── security/        # identity, PHI classifier/masking/authz, audit, validation
+│   │   ├── tools/           # MCP tool handlers and schemas
+│   │   ├── types/           # PHI matrix, masking rules, config types
+│   │   └── tests/           # jest suites + canary fixtures (run against src/)
+│   ├── scripts/             # portable jest launcher, baseline gate, e2e probes
+│   └── dist/                # Compiled JS — gitignored, required at runtime
 ├── examples/
-│   └── http-bridge/    # HTTP REST API bridge for web clients
-│
-docs/
-├── QUICKSTART.md       # Getting started guide
-├── PROMPTS.md         # LLM prompt library
-├── SECURITY.md        # Security and privacy guide
-└── AI_INTEGRATION.md   # AI assistant integration examples
+│   ├── http-bridge/         # HTTP REST API bridge for web clients
+│   ├── claude-client/
+│   └── copilot-integration/
 
-tests/
-├── e2e/               # End-to-end tests
-└── QA-REPORT.md       # Comprehensive QA test results
+docs/
+├── QUICKSTART.md
+├── PROMPTS.md
+├── SECURITY.md
+└── AI_INTEGRATION.md
+
+tests/e2e/                   # standalone e2e script
+QA-REPORT.md                 # test status (root, not tests/)
 ```
 
-## 🔒 Security Features (Phase 1 Complete)
+## 🔒 PHI protection
 
-### Enterprise Security Hardening
-- **OWASP Compliance**: Complete security headers and content security policies
-- **Multi-Tier Rate Limiting**: PHI-aware rate limiting with progressive delays
-- **Input Validation**: Comprehensive Joi-based validation with SQL injection prevention
-- **Request Monitoring**: Suspicious activity detection with automated IP blocking
-- **Emergency Access**: Break-glass mechanisms for critical healthcare scenarios
+### What masking covers
 
-### PHI Protection & Classification
-- **Advanced PHI Engine**: ML-powered classification of sensitive healthcare data
-- **Safe Mode**: Automatically masks names, addresses, birth dates, and identifiers
-- **Trusted Mode**: Returns data as-is for secure environments  
-- **Dynamic Masking**: Context-aware redaction based on PHI sensitivity levels
-- **Authorization Engine**: Role-based access control with healthcare-specific permissions
+Masking runs only after authorization allows the read. Rules come from three places: the PHI level defaults (`DEFAULT_MASKING_RULES`), a set of global rules applied to every resource type regardless of the per-type `switch`, and per-type rules in `PHIClassifier.getResourceSpecificMaskingRules()`.
 
-### Audit & HIPAA Compliance
-- **Comprehensive Audit Trail**: Structured logging with trace IDs for all operations
-- **PHI-Safe Logging**: Automatic redaction of sensitive data in audit logs
-- **FHIR AuditEvent Support**: Standards-compliant audit event emission
-- **Security Monitoring**: Real-time threat detection and response
-- **Compliance Reporting**: Automated generation of security and access reports
+Applied to an IDENTIFIABLE resource:
 
-### Authentication & Authorization
-- **SMART on FHIR / OAuth2**: Authorization Code + PKCE flow support
-- **Client Credentials**: Server-to-server access with scope validation
-- **Emergency Override**: Break-glass access for critical patient care situations
-- **Session Management**: Secure token handling with automatic expiration
+| Element | Treatment |
+|---|---|
+| `identifier` | replaced with a pseudonym token (`PT_…`) |
+| `resource.id` | replaced with a pseudonym token |
+| `Reference.reference` | rewritten to `Type/PT_…` |
+| `name` | replaced with `***` |
+| `birthDate` | removed |
+| `telecom`, `address`, `contact`, `communication` | removed |
+| `text.div` (narrative) | removed by default (`narrativePolicy`; `scrub` is the alternative) |
+| `meta.source` | removed |
+| `meta.security[].display`, `meta.tag[].display` | removed (`system`+`code` retained deliberately) |
+| Attachment `.data` | removed at ten known paths; `contentType`, `size`, `hash`, `title`, `creation` retained |
+| `contained[]`, `Bundle.entry[].resource` | recursed into and masked as resources in their own right |
+| `extension[]` / `modifierExtension[]` | rebuilt from a whitelist — `url` retained, every `value[x]` dropped — including extensions on primitives via the `_field` sibling |
 
-## 📖 Documentation
+### Uniform tokenization
 
-- **[Quick Start Guide](docs/QUICKSTART.md)** - Installation and basic usage
-- **[Prompt Library](docs/PROMPTS.md)** - Ready-to-use LLM prompts and patterns
-- **[Security Guide](docs/SECURITY.md)** - Production deployment and security considerations
+`resource.id` and `Reference.reference` are tokenized consistently across Condition, Observation, Encounter, MedicationRequest, Procedure and DiagnosticReport. **The same patient yields the same token everywhere within one process**, so a masked bundle stays internally joinable.
+
+### Pseudonym tokens are per-process — read this before caching them
+
+Tokens are `PT_` + 12 base64url characters, derived as `HMAC-SHA256(sessionKey, value)`. The session key is `crypto.randomBytes(32)`, generated in the `PHIMaskingEngine` constructor. Production constructs the engine with no key argument (`phi-authorization-engine.ts:250`), and **nothing persists the key**.
+
+Consequences:
+
+- **Restarting the server changes every token.** The same patient is `PT_aBc…` before a restart and something else after.
+- **Cross-session longitudinal linkage is impossible by design.** This is a real unlinkability property, not an accident.
+- **Any consumer that caches or stores `PT_` tokens as stable keys will break** at the next restart, silently, by splitting one patient into two. Treat a token as valid only within the response set it arrived in.
+
+`rotateSessionKey()` exists and drops every derived pseudonym when called. There is currently no supported way to supply a stable key from configuration.
+
+## 🔐 Authentication & Authorization
+
+This section describes what is wired on this branch. It is deliberately narrower than earlier revisions of this README, which described an OAuth2/SMART authorization server that does not exist in this repository.
+
+### What exists
+
+**Caller identity** (`src/security/identity.ts`, lane H). A single service principal is built from environment variables:
+
+| Variable | Meaning |
+|---|---|
+| `MCP_SERVICE_PRINCIPAL_ID` | Principal id. Absent or empty → no principal → PHI denied. |
+| `MCP_SERVICE_PRINCIPAL_SCOPES` | Space-separated scopes from the closed set below. |
+
+Scope spelling follows SMART on FHIR, but **only as a naming convention** so that a future token issuer's `scope` claim maps across without translation. The complete grant table is:
+
+| Scope | Grants |
+|---|---|
+| `patient/*.read`, `user/*.read`, `system/*.read` | `patient:read` |
+| `patient/*.write`, `user/*.write`, `system/*.write` | `patient:write` |
+| `x-restricted/*.read` | `restricted:read` |
+
+`x-restricted/*.read` is non-standard on purpose: the RESTRICTED tier (Coverage, Claim, ExplanationOfBenefit, Bundle, Binary) has no SMART equivalent, so reaching it requires a scope that cannot be confused with a standard one and never rides along with an ordinary read scope.
+
+Parsing is strict: an unrecognised scope, a malformed id, or an id declared with no scopes is a **startup error**, not a downgrade. A configured principal always has `roles: []` and never sets `phiAccessLevel` or `isEmergencyAccess` — those are independent grant routes inside the authorization engine, and configuration may not use them. The emergency grant is the only route that returns PHI unmasked, and no environment variable can open it.
+
+**Transport binding:**
+
+- **stdio** — `StaticIdentityProvider` holds the configured principal for the process lifetime.
+- **HTTP/SSE** — `RequestScopedIdentityProvider` carries the principal in an `AsyncLocalStorage` entered only after a bearer token has been verified. A tool call arriving by any route that did not go through `runWithPrincipal` gets no identity at all.
+- **Default** — `ANONYMOUS_IDENTITY_PROVIDER`, which returns `undefined`. Omitting a provider denies rather than grants.
+
+**HTTP bearer authentication** is a single shared secret: `AUTH_TOKEN`, compared with a timing-safe comparison in `http.ts`. If `AUTH_TOKEN` is unset the HTTP bridge is **open** — it returns `allowed: true` — but binds no principal, so PHI stays denied. Setting a principal does not authenticate anyone; it only says who a verified caller is.
+
+### What does not exist
+
+- No OAuth2 authorization server, no Authorization Code flow, no PKCE, no client credentials grant, no token introspection, no JWKS verification, no per-user tokens, no token expiry.
+- `AuthConfig` (`src/types/config.ts`) and `AuthConfigSchema` (`src/tools/schemas.ts`) are orphan type declarations with no implementation behind them.
+- No FHIR `AuditEvent` resources are emitted. Audit records are this project's own JSON shape, written with `console.error` (or `console.log` when `AUDIT_SINK=stdout`).
+- No machine learning is used anywhere in classification or anomaly detection. Classification is a static resource-type matrix plus regular-expression field-name patterns.
+
+Real token-issuer integration remains Phase 2 work. `identity.ts` defines the seam it plugs into: anything that can verify a caller produces a `User` and hands it to an `IdentityProvider`.
+
+## 📝 Audit logging
+
+Records are structured JSON on stderr (stdout is the MCP protocol channel; `AUDIT_SINK=stdout` restores the old behaviour for deployments already scraping it).
+
+Changes on this branch:
+
+- `originalInput` is **no longer written**. It previously carried a sanitized copy of the whole request.
+- Metadata passes through a **structural allowlist**, not a keyword denylist, and it is recursive. A key nobody anticipated is dropped rather than published.
+- The authorization catch block logs the error **class** only (`AuditLogger.errorClass`), never `error.message` — a thrown message routinely quotes the resource that broke it.
+- `resourceId` is replaced by `resourceIdHash`. **See open issue 1: this hash is reversible.**
+- **Denied reads now produce an audit record.** They previously produced none: `fhir-tools` returned as soon as `allowed` was false and never reached `logFhirOperation`, so the single most reviewable event this control produces left no trace.
+
+## 🚨 Known open issues
+
+These are open on this branch. They are listed here rather than in an issue tracker because overclaiming is the specific failure mode that produced most of the defects lanes A–I were created to fix.
+
+### 1. `resourceIdHash` is reversible (live PHI exposure)
+
+`AuditLogger.hashIdentifier` is `sha256(value)` truncated to 16 hex characters, **unsalted and unkeyed** (`audit-logger.ts:235-238`). Its own docstring claims it is "not a reversible identifier on its own." That is false for the low-entropy identifier spaces this server handles. A live patient id was recovered from a log line by direct comparison against `sha256(id)`.
+
+The repository already condemns this exact construction: `src/tests/fixtures/canary.ts:298-310` defines `LEGACY_UNSALTED_SHA256` as the identical computation and describes it as "equivalent to publishing the ID," because a complete rainbow table over the Israeli ID space is minutes of GPU time. The audit logger and the canary module disagree with each other, and the canary module is right.
+
+Fix direction: key the digest with a per-deployment secret (HMAC), as `PHIMaskingEngine` already does for pseudonyms.
+
+### 2. Free text is not masked on several clinical resource types
+
+`PHIClassifier.getResourceSpecificMaskingRules()` has `case` arms for Patient, RelatedPerson, Observation, Encounter, Coverage, Organization, Practitioner, DocumentReference and DiagnosticReport — and **no arm at all** for Condition, MedicationRequest, Procedure or CarePlan. Those types receive the global rules only, so their free-text elements survive:
+
+| Resource | Unmasked free text |
+|---|---|
+| Condition | `note[].text`, `code.text` |
+| MedicationRequest | `note[]`, `dosageInstruction[].text` |
+| Procedure | `note[]`, `report[].display` |
+| CarePlan | `description` |
+| DiagnosticReport | `presentedForm[].title`, `presentedForm[].url` (`conclusion` and `presentedForm[].data` *are* handled) |
+
+Observation (`note` removed) and Encounter are clean. This is therefore **inconsistency between rule sets, not uniform absence** — the guarantee was written once per resource type, so it is missing for every resource type nobody got to. Clinical notes are exactly where a patient name or ID ends up in practice.
+
+### 3. `resourceType` is a log-injection channel
+
+`handleRead` copies `args.resourceType` straight into the `SecurityContext` (`fhir-tools.ts:335`). On the denial path, `auditSecurityDenial` writes `context.resourceType` verbatim into the audit record — twice, as a top-level field and inside metadata (`security-middleware.ts:432,437`). That path runs **before validation succeeds and without authentication**.
+
+`resourceType` is on the audit allowlist (`audit-logger.ts:36`). Allowlisted *keys* are checked against `/^[A-Za-z0-9_]{1,40}$/`, but allowlisted *values* are only length-bounded by `boundString` — no character filtering, so newlines and JSON survive. An unauthenticated caller can therefore write chosen text, including forged record boundaries, into the audit stream.
+
+### 4. Open design question: is a logical `id` a direct identifier?
+
+`phi-classifier.ts:109-110` sets `hasDirectIdentifiers` when a key is `identifier` **or** `id`, and line 159 then upgrades `MINIMAL` → `IDENTIFIABLE`. Since virtually every resource fetched from a server carries an `id`, **`PHILevel.MINIMAL` is unreachable in practice**.
+
+Three tests are quarantined in `test-baseline.json` pending a decision, and they are not defects to be silently fixed — the decision has a real cost either way:
+
+- Narrowing `hasDirectIdentifiers` to `identifier` (plus `id` on patient-like types) **reduces protection**.
+- Keeping the rule means `PHILevel.MINIMAL` is dead code and the tests should be changed to expect `identifiable`.
+
+No lane owned this decision and it was deliberately not made during the merge. The other five baseline failures (input sanitization, rate limiting ×3, security headers) are pre-existing and outside the PHI remediation plan; they need their own triage.
+
+### Also unverified
+
+`DocumentReference` is `IDENTIFIABLE` in `RESOURCE_PHI_MATRIX` (`phi-types.ts:105`) and carries per-type masking rules, but it is **absent from `InputValidator.isValidResourceType`'s allowlist** (`input-validator.ts:423-430`). Reads and searches for it are rejected at validation, so its masking rules are unreachable through the tool surface. Whether this is an intentional restriction or an oversight is not recorded anywhere in the repository; it is documented here as a limitation, not a decision.
 
 ## 🧪 Testing
 
-Run the test suites:
-
 ```bash
-# Build the project first
-npm run build
+npm run build          # required before any runtime testing — see the build trap
 
-# Full QA test suite (comprehensive function testing)
-node manual-qa-test.js
-
-# E2E integration tests
-node tests/e2e/test-fhir-mcp.js
-
-# Type checking
+cd packages/mcp-fhir-server
+npm test               # jest, via the portable ESM launcher
+npm run test:gate      # jest + enforce test-baseline.json in both directions
 npm run typecheck
-
-# Linting (with improved type safety)
+npm run typecheck:tests
 npm run lint
 ```
 
-**QA Test Results**: ✅ 19/19 tests passed (100% success rate)
-- All core functions validated
-- Security features verified
-- PHI protection tested
-- Audit logging validated
-- ES module compatibility confirmed
+**Current status on this branch: 250 of 258 tests pass, with 8 known failures and 0 regressions** (verified by `npm run test:gate`; 14 suites, 12 passing).
 
-See [QA-REPORT.md](QA-REPORT.md) for detailed test results.
+The 8 failures are enumerated with per-entry reasoning in `packages/mcp-fhir-server/test-baseline.json`: three are the `PHILevel.MINIMAL` design question above, five are pre-existing failures outside the PHI remediation plan.
+
+`test:gate` enforces the baseline in **both** directions — an unlisted failure fails CI as a regression, and a listed test that starts passing also fails CI so the entry gets pruned. That is what stops the file from rotting into a blanket suppression.
+
+Historical note: earlier revisions of this README and of `QA-REPORT.md` claimed "19/19 tests passed (100% success rate)". That figure was not obtainable. The jest suite **could not execute at all** under ESM until lane A repaired the runner (`edbceca T0.1: repair jest under ESM so the test suite actually executes`). See `QA-REPORT.md` for the correction.
+
+Additional standalone scripts (not part of the jest suite):
+
+```bash
+node test-basic-functionality.js
+node manual-qa-test.js
+node tests/e2e/test-fhir-mcp.js
+npm run test:e2e        # scripts/lane-h-e2e.mjs
+```
 
 ## 🔧 Configuration
 
-Configure via environment variables:
+Read by the MCP server (`packages/mcp-fhir-server`):
 
 | Variable | Description | Default |
-|----------|-------------|---------|
+|---|---|---|
 | `FHIR_BASE_URL` | FHIR server base URL | `https://hapi.fhir.org/baseR4` |
-| `FHIR_TOKEN` | Bearer token for FHIR server | - |
+| `FHIR_TOKEN` | Bearer token sent to the FHIR server | — |
 | `TERMINOLOGY_BASE_URL` | HL7 terminology service URL | `https://tx.fhir.org/r4` |
-| `TERMINOLOGY_TOKEN` | Bearer token for terminology service | - |
-| `PHI_MODE` | PHI protection mode (`safe` or `trusted`) | `safe` |
-| `ENABLE_AUDIT` | Enable audit logging | `true` |
+| `TERMINOLOGY_TOKEN` | Bearer token sent to the terminology service | — |
+| `PHI_MODE` | `safe` or `trusted`. Unrecognised values are a startup error. | `safe` |
+| `ENABLE_AUDIT` | Audit logging; any value other than `"false"` enables it | `true` |
+| `MCP_SERVICE_PRINCIPAL_ID` | Caller identity. **Unset → all IDENTIFIABLE reads denied.** | — |
+| `MCP_SERVICE_PRINCIPAL_SCOPES` | Space-separated scopes from the table above | — |
+| `MCP_TRANSPORT` | `http` selects the HTTP/SSE bridge | stdio |
+| `PORT` | HTTP transport port | `8080` |
+| `AUTH_TOKEN` | Shared bearer secret for HTTP mode. **Unset → HTTP bridge is open.** | — |
+| `AUDIT_SINK` | `stdout` writes audit records to stdout instead of stderr | stderr |
+| `NODE_ENV` | Standard | — |
+
+Read only by the `packages/examples/http-bridge` example, **not** by the MCP server: `ALLOWED_ORIGINS`, `REQUIRE_HTTPS`, `SECURITY_LOGGING`, `PORT`, `NODE_ENV`, `FHIR_BASE_URL`, `TERMINOLOGY_BASE_URL`.
+
+**Read by nothing.** These appeared in earlier documentation and have no effect anywhere in the repository: `CORS_CREDENTIALS`, `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX_REQUESTS`, `FHIR_RATE_LIMIT_MAX`, `WRITE_RATE_LIMIT_MAX`. Rate-limiter thresholds are currently compiled in, not configurable.
 
 ## 🤖 Using with Claude
-
-Add FHIR-MCP to your Claude MCP configuration:
 
 ```json
 {
@@ -180,68 +374,87 @@ Add FHIR-MCP to your Claude MCP configuration:
         "FHIR_BASE_URL": "https://your-fhir-server.com/fhir",
         "TERMINOLOGY_BASE_URL": "https://tx.fhir.org/r4",
         "PHI_MODE": "safe",
-        "ENABLE_AUDIT": "true"
+        "ENABLE_AUDIT": "true",
+        "MCP_SERVICE_PRINCIPAL_ID": "claude-desktop",
+        "MCP_SERVICE_PRINCIPAL_SCOPES": "system/*.read"
       }
     }
   }
 }
 ```
 
+Run `npm run build` first — this config points at `dist/`, which is not in the repository.
+
+Omit `MCP_SERVICE_PRINCIPAL_ID` and the server will start and answer `fhir.capabilities` and terminology calls normally, but every Patient read will come back as `Access denied: HEALTHCARE_COMPLIANCE_VIOLATION`.
+
 ## 🌐 HTTP Bridge for Web Applications
 
-For browser-based AI assistants that can't use MCP directly:
+For browser-based clients that cannot speak MCP directly.
 
-### Local Development
 ```bash
-# Build the HTTP bridge first
 cd packages/examples/http-bridge
 npm run build
-
-# Start the HTTP bridge server
-PORT=3001 FHIR_BASE_URL="https://hapi.fhir.org/baseR4" TERMINOLOGY_BASE_URL="https://tx.fhir.org/r4" PHI_MODE="safe" ENABLE_AUDIT="true" npm start
 ```
 
-### Docker Deployment (Recommended)
+```powershell
+# PowerShell
+$env:PORT = "3001"
+$env:FHIR_BASE_URL = "https://hapi.fhir.org/baseR4"
+$env:TERMINOLOGY_BASE_URL = "https://tx.fhir.org/r4"
+$env:PHI_MODE = "safe"
+$env:ENABLE_AUDIT = "true"
+npm start
+```
+
 ```bash
-# Build and start with Docker Compose
+# bash
+PORT=3001 FHIR_BASE_URL="https://hapi.fhir.org/baseR4" \
+  TERMINOLOGY_BASE_URL="https://tx.fhir.org/r4" \
+  PHI_MODE="safe" ENABLE_AUDIT="true" npm start
+```
+
+### Docker
+
+```bash
 docker-compose up --build
 
-# Or run individual commands
 docker build -t fhir-mcp .
-docker run -p 3002:3001 -e FHIR_BASE_URL="https://hapi.fhir.org/baseR4" -e TERMINOLOGY_BASE_URL="https://tx.fhir.org/r4" -e PHI_MODE="safe" -e ENABLE_AUDIT="true" fhir-mcp
+docker run -p 3002:3001 \
+  -e FHIR_BASE_URL="https://hapi.fhir.org/baseR4" \
+  -e TERMINOLOGY_BASE_URL="https://tx.fhir.org/r4" \
+  -e PHI_MODE="safe" -e ENABLE_AUDIT="true" fhir-mcp
 ```
 
-The bridge provides secure REST endpoints at `http://localhost:3002` (or localhost:3001 for local dev):
-- `GET /health` - Health check with security status
-- `GET /tools` - List available tools
-- `POST /fhir/capabilities` - FHIR server capabilities
-- `POST /fhir/search` - Search FHIR resources  
-- `POST /fhir/read` - Read FHIR resources
-- `POST /fhir/create` - Create FHIR resources (write operations)
-- `POST /fhir/update` - Update FHIR resources (write operations)
-- `POST /terminology/lookup` - Terminology lookup
-- `POST /terminology/expand` - ValueSet expansion
-- `POST /terminology/translate` - Code translation
-- `POST /tools/{toolName}` - Generic tool interface
+Endpoints at `http://localhost:3002` (3001 for local dev):
 
-### Security Features Active
-- ✅ OWASP security headers
-- ✅ Multi-tier rate limiting
-- ✅ Input validation & sanitization
-- ✅ PHI-aware authorization
-- ✅ Comprehensive audit logging
-- ✅ Emergency access controls
+- `GET /health` — health check
+- `GET /tools` — list available tools
+- `POST /fhir/capabilities` | `/fhir/search` | `/fhir/read` | `/fhir/create` | `/fhir/update`
+- `POST /terminology/lookup` | `/terminology/expand` | `/terminology/translate`
+- `POST /tools/{toolName}` — generic tool interface
+
+The MCP server's own HTTP transport (`MCP_TRANSPORT=http`) exposes `/healthz` separately.
+
+### Active controls
+
+- OWASP security headers
+- Multi-tier rate limiting (thresholds compiled in; three of the eight baseline test failures are rate-limiter behaviour disagreements, so verify against your own traffic rather than trusting the defaults)
+- Joi input validation and sanitization
+- PHI-aware authorization, fail-closed without a principal
+- Audit logging on every allowed *and* denied read
 
 ## 📋 Roadmap
 
-- [x] **MVP**: Basic FHIR operations and terminology lookup
-- [x] **QA**: Comprehensive testing and security validation  
-- [x] **ES Modules**: Modern JavaScript module support
-- [x] **HTTP Bridge**: Web-accessible REST API
-- [x] **Phase 1 Security**: Enterprise hardening with PHI protection
-- [x] **Docker**: Containerized deployment with security hardening
-- [ ] **Phase 2**: OAuth2 flows, advanced policy engine
-- [ ] **Phase 3**: Delete operations, bulk export, R5 support
+- [x] **MVP**: basic FHIR operations and terminology lookup
+- [x] **ES Modules**: modern JavaScript module support
+- [x] **HTTP Bridge**: web-accessible REST API
+- [x] **Docker**: containerized deployment
+- [x] **Test infrastructure**: jest running under ESM, golden corpus, PHI canary harness, enforced failure baseline (lane A)
+- [x] **PHI remediation lanes A–I**: fail-closed guard construction, masking rules, masking engine, authorization invariant, log-leak closure, caller identity, uniform tokenization
+- [ ] **Security Phase 1**: *not complete.* Four known open issues, one a live PHI exposure. See [Known open issues](#-known-open-issues). Previous revisions of this file marked this done; masking was unreachable in production until lane H and three PHI log leaks were open until lane G.
+- [ ] **QA**: *not complete.* 250/258 with 8 known failures; `QA-REPORT.md` is being rebuilt against the real suite.
+- [ ] **Phase 2**: real OAuth2 / SMART-on-FHIR token verification, advanced policy engine
+- [ ] **Phase 3**: delete operations, bulk export, R5 support
 - [ ] **Future**: GraphQL support, subscription webhooks
 
 ## 🤝 Contributing
@@ -252,9 +465,11 @@ The bridge provides secure REST endpoints at `http://localhost:3002` (or localho
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
+If a change makes a listed known issue stale, update this README in the same commit. If a change makes a `test-baseline.json` entry pass, delete that entry in the same commit — `test:gate` will fail otherwise, on purpose.
+
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).
 
 ## 🙏 Acknowledgments
 
