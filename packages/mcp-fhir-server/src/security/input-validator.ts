@@ -8,9 +8,28 @@ export interface ValidationRule {
   maxLength?: number;
 }
 
+/**
+ * A validation failure, structured.
+ *
+ * The point of this type is that it has nowhere to put the offending value.
+ * `errors` is prose meant for the caller; `failures` is what the audit log
+ * records, and it carries only the field that failed and the rule it failed.
+ * Deriving one from the other by parsing strings -- which an earlier cut of this
+ * change did -- guesses wrong as soon as two producers disagree about whether
+ * `a: b` means "field: rule" or "rule: field".
+ */
+export interface ValidationFailure {
+  /** Field path the failure occurred on. Bounded to an identifier. */
+  field?: string;
+  /** The rule that failed. Never a value. */
+  code: string;
+}
+
 export interface ValidationResult {
   valid: boolean;
   errors: string[];
+  /** Value-free failure descriptors. This is what may be logged. */
+  failures?: ValidationFailure[];
   sanitizedData?: any;
 }
 
@@ -26,25 +45,37 @@ export class InputValidator {
    */
   public validateFhirResource(resource: any): ValidationResult {
     const errors: string[] = [];
+    const failures: ValidationFailure[] = [];
 
     // Basic structure validation
     if (!resource || typeof resource !== 'object') {
-      return { valid: false, errors: ['Resource must be a valid object'] };
+      return {
+        valid: false,
+        errors: ['Resource must be a valid object'],
+        failures: [{ code: 'not_an_object' }]
+      };
     }
 
     // Required fields validation
     if (!resource.resourceType) {
       errors.push('resourceType is required');
+      failures.push({ field: 'resourceType', code: 'required' });
     }
 
-    // Resource type validation
+    // Resource type validation.
+    //
+    // The rejected value is NOT interpolated into the message. These strings are
+    // returned to the caller AND handed to the audit logger, so anything
+    // interpolated here becomes a log entry. Name the field, not the value.
     if (resource.resourceType && !this.isValidResourceType(resource.resourceType)) {
-      errors.push(`Invalid resourceType: ${resource.resourceType}`);
+      errors.push('Invalid resourceType');
+      failures.push({ field: 'resourceType', code: 'unknown_resource_type' });
     }
 
     // ID validation if present
     if (resource.id && !this.isValidId(resource.id)) {
       errors.push('Invalid resource ID format');
+      failures.push({ field: 'id', code: 'malformed' });
     }
 
     // Sanitize and validate text fields
@@ -53,10 +84,12 @@ export class InputValidator {
     // Additional resource-specific validation
     const resourceValidation = this.validateResourceSpecific(sanitizedResource);
     errors.push(...resourceValidation.errors);
+    failures.push(...(resourceValidation.failures ?? []));
 
     return {
       valid: errors.length === 0,
       errors,
+      failures,
       sanitizedData: sanitizedResource
     };
   }
@@ -66,17 +99,23 @@ export class InputValidator {
    */
   public validateSearchParams(resourceType: string, params: any): ValidationResult {
     const errors: string[] = [];
+    const failures: ValidationFailure[] = [];
     const sanitizedParams: any = {};
 
     if (!resourceType || !this.isValidResourceType(resourceType)) {
       errors.push('Invalid or missing resourceType');
+      failures.push({ field: 'resourceType', code: 'invalid_or_missing' });
     }
 
     if (params && typeof params === 'object') {
       for (const [key, value] of Object.entries(params)) {
         // Validate parameter name
+        // `key` has just FAILED the parameter-name check, i.e. it is arbitrary
+        // caller-controlled text of unknown shape. It is not echoed, and the
+        // failure descriptor carries no field for the same reason.
         if (!this.isValidSearchParam(key)) {
-          errors.push(`Invalid search parameter: ${key}`);
+          errors.push('Unrecognized search parameter');
+          failures.push({ code: 'unrecognized_search_parameter' });
           continue;
         }
 
@@ -85,7 +124,11 @@ export class InputValidator {
         if (sanitizedValue !== null) {
           sanitizedParams[key] = sanitizedValue;
         } else {
+          // `key` passed isValidSearchParam, so it is a bounded identifier
+          // (leading letter, <= 100 chars) and naming it cannot reproduce a
+          // numeric identifier. The VALUE is not recorded.
           errors.push(`Invalid value for parameter: ${key}`);
+          failures.push({ field: InputValidator.boundPathSegment(key), code: 'invalid_value' });
         }
       }
     }
@@ -93,6 +136,7 @@ export class InputValidator {
     return {
       valid: errors.length === 0,
       errors,
+      failures,
       sanitizedData: { resourceType, params: sanitizedParams }
     };
   }
@@ -212,6 +256,7 @@ export class InputValidator {
    */
   private performApiValidation(operation: string, args: any): ValidationResult {
     const errors: string[] = [];
+    const failures: ValidationFailure[] = [];
     const sanitizedArgs = args;
 
     switch (operation) {
@@ -225,11 +270,13 @@ export class InputValidator {
         return this.validateUpdateArgs(args);
       default:
         errors.push(`Unknown operation: ${operation}`);
+        failures.push({ code: 'unknown_operation' });
     }
 
     return {
       valid: errors.length === 0,
       errors,
+      failures,
       sanitizedData: sanitizedArgs
     };
   }
@@ -250,7 +297,8 @@ export class InputValidator {
     
     return {
       valid: !error,
-      errors: error ? error.details.map(detail => detail.message) : [],
+      errors: error ? error.details.map(detail => InputValidator.joiFailureClass(detail)) : [],
+      failures: error ? error.details.map(detail => InputValidator.joiFailure(detail)) : [],
       sanitizedData: value
     };
   }
@@ -269,7 +317,8 @@ export class InputValidator {
     
     return {
       valid: !error,
-      errors: error ? error.details.map(detail => detail.message) : [],
+      errors: error ? error.details.map(detail => InputValidator.joiFailureClass(detail)) : [],
+      failures: error ? error.details.map(detail => InputValidator.joiFailure(detail)) : [],
       sanitizedData: value
     };
   }
@@ -279,17 +328,21 @@ export class InputValidator {
    */
   private validateCreateArgs(args: any): ValidationResult {
     const errors: string[] = [];
+    const failures: ValidationFailure[] = [];
 
     if (!args.resource) {
       errors.push('resource is required for create operation');
+      failures.push({ field: 'resource', code: 'required' });
     } else {
       const resourceValidation = this.validateFhirResource(args.resource);
       errors.push(...resourceValidation.errors);
+      failures.push(...(resourceValidation.failures ?? []));
     }
 
     return {
       valid: errors.length === 0,
       errors,
+      failures,
       sanitizedData: args
     };
   }
@@ -299,23 +352,29 @@ export class InputValidator {
    */
   private validateUpdateArgs(args: any): ValidationResult {
     const errors: string[] = [];
+    const failures: ValidationFailure[] = [];
 
     if (!args.resource) {
       errors.push('resource is required for update operation');
+      failures.push({ field: 'resource', code: 'required' });
     } else {
       const resourceValidation = this.validateFhirResource(args.resource);
       errors.push(...resourceValidation.errors);
+      failures.push(...(resourceValidation.failures ?? []));
     }
 
     if (!args.id) {
       errors.push('id is required for update operation');
+      failures.push({ field: 'id', code: 'required' });
     } else if (!this.isValidId(args.id)) {
       errors.push('Invalid resource ID format for update');
+      failures.push({ field: 'id', code: 'malformed' });
     }
 
     return {
       valid: errors.length === 0,
       errors,
+      failures,
       sanitizedData: args
     };
   }
@@ -325,21 +384,25 @@ export class InputValidator {
    */
   private validateResourceSpecific(resource: any): ValidationResult {
     const errors: string[] = [];
+    const failures: ValidationFailure[] = [];
     const resourceType = resource.resourceType;
 
     switch (resourceType) {
       case 'Patient':
         if (resource.name && !Array.isArray(resource.name)) {
           errors.push('Patient.name must be an array');
+          failures.push({ field: 'Patient.name', code: 'not_an_array' });
         }
         break;
         
       case 'Observation':
         if (!resource.status) {
           errors.push('Observation.status is required');
+          failures.push({ field: 'Observation.status', code: 'required' });
         }
         if (!resource.code) {
           errors.push('Observation.code is required');
+          failures.push({ field: 'Observation.code', code: 'required' });
         }
         break;
         
@@ -348,7 +411,8 @@ export class InputValidator {
 
     return {
       valid: errors.length === 0,
-      errors
+      errors,
+      failures
     };
   }
 
@@ -461,6 +525,42 @@ export class InputValidator {
     }
     return value;
   };
+
+  /**
+   * Render a Joi validation failure as a CLASS, not as prose.
+   *
+   * Joi's `detail.message` quotes the offending value for several rule types --
+   * `string.pattern.base` renders as `"id" with value "<value>" fails to match
+   * the required pattern`. Those messages were handed straight to the audit
+   * logger, so a rejected FHIR id or search value was written to the log
+   * verbatim. `detail.path` and `detail.type` carry the same diagnostic
+   * information -- which field, which rule -- and carry no value at all.
+   *
+   * Path segments are bounded rather than trusted: Joi reports an unknown
+   * top-level key using the caller's own key name in the path.
+   */
+  private static joiFailureClass(detail: Joi.ValidationErrorItem): string {
+    const path = detail.path
+      .map((segment) => InputValidator.boundPathSegment(segment))
+      .join('.');
+    const code = detail.type || 'invalid';
+    return path ? `${path}: ${code}` : code;
+  }
+
+  /** The same failure as a structured descriptor: field and rule, no value. */
+  private static joiFailure(detail: Joi.ValidationErrorItem): ValidationFailure {
+    const field = detail.path
+      .map((segment) => InputValidator.boundPathSegment(segment))
+      .join('.');
+    const code = detail.type || 'invalid';
+    return field ? { field, code } : { code };
+  }
+
+  /** A path segment is a bounded identifier or it is nothing. */
+  private static boundPathSegment(segment: string | number): string {
+    if (typeof segment === 'number') return String(segment);
+    return /^[A-Za-z_][A-Za-z0-9_.-]{0,40}$/.test(segment) ? segment : '(unrecognized)';
+  }
 
   /**
    * Clear validation cache

@@ -399,8 +399,11 @@ describe('Security Integration Tests', () => {
 
   describe('Audit and Compliance', () => {
     test('should log all security events properly', async () => {
-      // Mock console.log to capture audit logs
-      const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+      // Capture audit logs from console.ERROR, not console.log. Audit records
+      // moved to stderr: stdout is the JSON-RPC channel on a stdio MCP server,
+      // so audit output on stdout was interleaved with protocol frames. This
+      // assertion tracks the sink; it is not a claim that stdout was right.
+      const logSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
       const securityContext = {
         userId: 'audit-test-user',

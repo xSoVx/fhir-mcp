@@ -360,9 +360,19 @@ describe('Finding 7 - the audit sink itself does not become a PHI store', () => 
         src.split('\n').forEach((line, i) => {
           if (!/console\.(log|warn|error|info|debug)\s*\(/.test(line)) return;
           // audit-logger.ts is the one structured sink; it receives
-          // already-redacted, already-hashed input.
+          // already-redacted, already-hashed input. That call now lives in a
+          // single private emit(line: string) -- the sink moved off stdout,
+          // because stdout is this server's JSON-RPC channel -- so the
+          // exemption follows it rather than being pinned to one expression.
+          if (file === 'audit-logger.ts' && /console\.\w+\(line\)/.test(line)) return;
           if (file === 'audit-logger.ts' && line.includes('JSON.stringify(auditEvent)')) return;
-          if (/\b(resource|entry|error|payload|bundle)\b/.test(line)) {
+          // Strip the `console.<method>` token before looking for payload
+          // words. Otherwise `console.error(anything)` matches /\berror\b/ on
+          // its own method name, so every console.error in these directories is
+          // an offender by construction regardless of what it is handed -- the
+          // guard would be reporting the sink's name, not its argument.
+          const args = line.replace(/console\.(log|warn|error|info|debug)/g, 'console');
+          if (/\b(resource|entry|error|payload|bundle)\b/.test(args)) {
             offenders.push(dir + '/' + file + ':' + (i + 1) + ': ' + line.trim());
           }
         });

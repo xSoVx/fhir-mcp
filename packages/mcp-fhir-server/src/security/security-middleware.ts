@@ -105,8 +105,8 @@ export class SecurityMiddleware {
         rateLimitInfo = this.rateLimiter.checkRateLimit(rateLimitRequest);
         
         if (!rateLimitInfo.allowed) {
-          await this.auditSecurityEvent('rate_limit_exceeded', context, {
-            reason: rateLimitInfo.reason,
+          await this.auditSecurityDenial('rate_limit_exceeded', context, requestData, {
+            denialReason: rateLimitInfo.reason,
             remainingRequests: rateLimitInfo.remainingRequests
           });
 
@@ -131,9 +131,28 @@ export class SecurityMiddleware {
           violations.push(...validationResult.errors);
           riskLevel = 'high';
 
-          await this.auditSecurityEvent('input_validation_failed', context, {
-            errors: validationResult.errors,
-            originalInput: this.sanitizeForLogging(requestData)
+          // LEAK 1 (unauthenticated, reachable through the real tool surface).
+          //
+          // This used to log `originalInput: this.sanitizeForLogging(requestData)`
+          // -- the caller's entire request, passed through a keyword denylist
+          // (password|token|authorization|ssn|birthdate). A live fhir.search on
+          // Patient therefore wrote given and family names and a nine-digit
+          // national ID into the audit stream in clear text. `birthdate` WAS
+          // redacted, which is exactly what made the control look effective.
+          //
+          // The request is no longer logged at all. A validation failure is
+          // fully described by its CLASS and the FIELD it occurred on, and
+          // neither of those needs the value that failed. Anything short of
+          // dropping the payload is a denylist by another name.
+          await this.auditSecurityDenial('input_validation_failed', context, requestData, {
+            failureCount: validationResult.errors.length,
+            // Structured, value-free descriptors built by the validator itself
+            // (ValidationFailure: a field and a rule, with nowhere to put a
+            // value). NOT parsed out of the human-readable messages -- an
+            // earlier cut of this change did that and mislabelled Joi's
+            // `field: rule` as `rule: field`, which is the mistake
+            // string-scraping a security control always eventually makes.
+            validationFailures: validationResult.failures ?? []
           });
 
           return {
@@ -167,6 +186,20 @@ export class SecurityMiddleware {
           riskLevel = complianceResult.riskLevel;
 
           if (complianceResult.blockRequest) {
+            // AUDIT COMPLETENESS. This return had no audit record before it, so
+            // a denied Patient read -- the single most reviewable event this
+            // control produces -- left no trace at all: fhir-tools returns as
+            // soon as `allowed` is false and never reaches logFhirOperation. A
+            // refusal that is not recorded cannot be reviewed, and a DLP control
+            // whose refusals are invisible cannot be told apart from one that
+            // was never consulted.
+            await this.auditSecurityDenial(
+              'healthcare_compliance_violation',
+              context,
+              requestData,
+              { violationsDetected: complianceResult.violations.length, riskLevel }
+            );
+
             return {
               allowed: false,
               reason: 'HEALTHCARE_COMPLIANCE_VIOLATION',
@@ -181,6 +214,12 @@ export class SecurityMiddleware {
       if (context.phiLevel && context.phiLevel !== PHILevel.NONE) {
         const phiResult = await this.performPHISecurityChecks(context);
         if (!phiResult.allowed) {
+          // Same audit-completeness gap as the compliance branch above.
+          await this.auditSecurityDenial('phi_access_denied', context, requestData, {
+            denialReason: phiResult.reason,
+            riskLevel: 'high'
+          });
+
           return {
             allowed: false,
             reason: phiResult.reason,
@@ -208,10 +247,10 @@ export class SecurityMiddleware {
       };
 
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown security error';
-      
-      await this.auditSecurityEvent('security_processing_error', context, {
-        error: errorMessage,
+      // The CLASS of the failure, never its message. A message thrown anywhere
+      // below this line routinely quotes the resource that caused it.
+      await this.auditSecurityDenial('security_processing_error', context, requestData, {
+        errorClass: AuditLogger.errorClass(error),
         processingTime: Date.now() - startTime
       });
 
@@ -356,30 +395,54 @@ export class SecurityMiddleware {
   }
 
   /**
-   * Sanitize data for logging (remove sensitive information)
+   * Record a REFUSAL.
+   *
+   * Every `allowed: false` return from processRequest goes through here, for two
+   * reasons. Completeness: the callers of this middleware return the moment
+   * `allowed` is false, so a refusal not recorded here is not recorded anywhere
+   * -- denied Patient reads previously produced no audit record at all.
+   * Uniformity: one function decides what a refusal record contains, so a new
+   * deny branch cannot invent its own shape and quietly include the request it
+   * refused.
+   *
+   * `requestData` is passed in but is NEVER logged as a payload. The only thing
+   * taken from it is the resource id, handed to AuditLogger as a top-level
+   * `resourceId`, which hashes it. That is deliberate: a refusal the reviewer
+   * cannot tie to a record is close to useless, and a refusal that quotes the
+   * record is the leak this lane exists to close. The hash gives correlation
+   * without content.
    */
-  private sanitizeForLogging(data: any): any {
-    if (!data) return data;
+  private async auditSecurityDenial(
+    event: string,
+    context: SecurityContext,
+    requestData: any,
+    additionalData?: Record<string, unknown>
+  ): Promise<void> {
+    if (!this.config.enableAuditLogging) return;
 
-    const sanitized = JSON.parse(JSON.stringify(data));
-    const sensitiveFields = ['password', 'token', 'authorization', 'ssn', 'birthdate'];
+    const resourceId =
+      requestData && typeof requestData === 'object' && typeof requestData.id === 'string'
+        ? requestData.id
+        : undefined;
 
-    const sanitizeObject = (obj: any): any => {
-      if (typeof obj !== 'object' || obj === null) return obj;
-
-      Object.keys(obj).forEach(key => {
-        const lowerKey = key.toLowerCase();
-        if (sensitiveFields.some(field => lowerKey.includes(field))) {
-          obj[key] = '***REDACTED***';
-        } else if (typeof obj[key] === 'object') {
-          obj[key] = sanitizeObject(obj[key]);
-        }
-      });
-
-      return obj;
-    };
-
-    return sanitizeObject(sanitized);
+    await this.auditLogger.log({
+      operation: `security.${event}`,
+      success: false,
+      userId: context.userId,
+      resourceType: context.resourceType,
+      resourceId,
+      metadata: {
+        sessionId: context.sessionId,
+        operation: context.operation,
+        resourceType: context.resourceType,
+        phiLevel: context.phiLevel,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
+        accessDenied: true,
+        timestamp: new Date().toISOString(),
+        ...additionalData
+      }
+    });
   }
 
   /**

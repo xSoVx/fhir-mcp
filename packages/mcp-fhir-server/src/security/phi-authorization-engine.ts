@@ -337,12 +337,24 @@ export class PHIAuthorizationEngine {
       return authResult;
 
     } catch (error) {
-      // Log authorization errors
+      // LEAK 2. This logged `error.message` verbatim, one layer ABOVE the
+      // masking-failure recorder that already gets this right. Forcing a throw
+      // whose message carried PHI produced
+      //   {"operation":"phi_authorization_read","success":false,
+      //    "error":"boom for patient <name> MRN <id>"}
+      // immediately before the clean `phi.masking_failure` record -- the
+      // correct record and the leak sitting next to each other in one stream.
+      //
+      // An error message is written by whoever threw it, and in a PHI pipeline
+      // that is routinely a layer holding the resource. The message is
+      // therefore never logged; only its class is. logMaskingFailure is the
+      // pattern being followed here -- it refuses to accept the error object at
+      // all, for exactly this reason.
       await this.auditLogger.log({
         operation: `phi_authorization_${operation}`,
         success: false,
         duration: Date.now() - startTime,
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: AuditLogger.errorClass(error)
       });
 
       throw error;
