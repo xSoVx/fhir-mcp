@@ -292,8 +292,21 @@ export const GLOBAL_NARRATIVE_MASKING_RULES: readonly MaskingRule[] = [
  * where Israeli clinical documents actually live. A masked FHIR resource with
  * an unmasked attached PDF is not de-identified.
  *
- * Only `data` is removed; `contentType`, `size`, `hash`, `title` and
+ * `data` and `url` are both removed. `contentType`, `size`, `hash` and
  * `creation` survive, so the model is still told that a document exists.
+ *
+ * `url` JOINED THIS LIST because stripping `data` while keeping `url` is not
+ * de-identification, it is indirection: `Attachment.url` may address the very
+ * blob `data` carried inline, so a consumer that follows it retrieves exactly
+ * what was just removed, and the URL path itself routinely embeds the resource
+ * id it was fetched by. Removed rather than hashed -- a de-identified consumer
+ * has no use for a retrieval handle that would justify keeping one.
+ *
+ * `title` LEFT the surviving set for the reason recorded on
+ * GLOBAL_FREE_TEXT_MASKING_RULES: it is free prose, and
+ * `DiagnosticReport.presentedForm[].title` was observed carrying the canary.
+ * `contentType`, `size`, `hash` and `creation` already carry the whole of the
+ * "a document exists" signal that `title` was being kept for.
  *
  * Paths that do not exist on a given resource are no-ops in the masking
  * engine, so this list is applied unconditionally rather than per resource
@@ -309,7 +322,24 @@ export const GLOBAL_ATTACHMENT_MASKING_RULES: readonly MaskingRule[] = [
   { field: 'contentAttachment.data', maskingType: 'remove' },        // Communication.payload[] choice element
   { field: 'payload.contentAttachment.data', maskingType: 'remove' },
   { field: 'valueAttachment.data', maskingType: 'remove' },          // Observation.valueAttachment
-  { field: 'form.data', maskingType: 'remove' }                      // Claim/Coverage form attachments
+  { field: 'form.data', maskingType: 'remove' },                     // Claim/Coverage form attachments
+
+  // The same paths again for `url`. See the docstring: a stripped `data` with a
+  // live `url` beside it is the same blob behind one redirect.
+  // NB: deliberately NO root-level `{ field: 'url' }`. ValueSet, CodeSystem and
+  // every other canonical resource carry their IDENTITY in a top-level `url`,
+  // and these rules reach those types too; removing it would corrupt terminology
+  // without protecting anyone. Attachment never sits at a resource root, so the
+  // omission costs nothing.
+  { field: 'content.attachment.url', maskingType: 'remove' },
+  { field: 'content.url', maskingType: 'remove' },
+  { field: 'presentedForm.url', maskingType: 'remove' },
+  { field: 'photo.url', maskingType: 'remove' },
+  { field: 'attachment.url', maskingType: 'remove' },
+  { field: 'contentAttachment.url', maskingType: 'remove' },
+  { field: 'payload.contentAttachment.url', maskingType: 'remove' },
+  { field: 'valueAttachment.url', maskingType: 'remove' },
+  { field: 'form.url', maskingType: 'remove' }
 ];
 
 /**
@@ -342,6 +372,78 @@ export const GLOBAL_META_MASKING_RULES: readonly MaskingRule[] = [
   { field: 'meta.security.display', maskingType: 'remove' },
   { field: 'meta.tag.display', maskingType: 'remove' },
   { field: 'meta.source', maskingType: 'remove' }
+];
+
+/**
+ * FREE-TEXT elements: human-authored prose, on every resource type that has any.
+ *
+ * WHY THIS LIST EXISTS
+ * --------------------
+ * `PHIClassifier.getResourceSpecificMaskingRules()` had NO `case` arm at all for
+ * Condition, MedicationRequest, Procedure or CarePlan, so those types received
+ * only the global layer -- and the global layer had nothing for free text. Every
+ * one of them was confirmed leaking through the real tool surface at
+ * `phiLevel: "identifiable"`:
+ *
+ *   Condition          note[].text, code.text
+ *   MedicationRequest  note[].text, dosageInstruction[].text
+ *   Procedure          note[].text, report[].display
+ *   CarePlan           note[].text, description
+ *   DiagnosticReport   presentedForm[].title, presentedForm[].url
+ *
+ * The shape of the defect is the point. Observation DID have
+ * `{ note: remove }` and Encounter is clean, so this was never uniform absence
+ * -- it was INCONSISTENCY BETWEEN RULE SETS, which is the same defect that
+ * produced the `identifier`, `extension` and `subject` findings before it. A
+ * per-type enumeration cannot fix that class: it fixes the four types someone
+ * listed and misses the fifth type someone adds next quarter.
+ *
+ * So free text is treated as a CATEGORY. The category is recognisable by
+ * element name, because FHIR names it consistently: `note[].text` (Annotation),
+ * `X.text` (CodeableConcept, Dosage, HumanName, Address), `description`,
+ * `title`, and `Reference.display`. Nothing in FHIR constrains any of them, and
+ * export pipelines routinely copy the patient banner into all of them.
+ *
+ * WHY THIS IS NOT THE WHOLE FIX -- the same two-layer split as
+ * GLOBAL_REFERENCE_MASKING_RULES, for the same reason. `MaskingRule.field` is a
+ * fixed dot-path, and free text appears at paths no finite list enumerates
+ * (`stage[].summary.text`, `activity[].detail.description`, a CodeableConcept
+ * inside a contained resource, an element added by a future FHIR release). This
+ * list is the DECLARED layer, useful because it is inspectable and testable;
+ * `PHIMaskingEngine.scrubFreeText()` is the STRUCTURAL layer that actually
+ * closes the surface by walking the whole graph.
+ *
+ * Removal, not hashing: prose has no correlating value worth a token, and a
+ * pseudonym in place of a sentence tells a reader less than its absence does.
+ */
+export const GLOBAL_FREE_TEXT_MASKING_RULES: readonly MaskingRule[] = [
+  // Annotation[]. Removing the whole element takes `text` with it, and
+  // `author` and `time` alongside -- both of which identify people too.
+  { field: 'note', maskingType: 'remove' },
+
+  // Free-prose elements in their own right.
+  { field: 'description', maskingType: 'remove' },
+  { field: 'title', maskingType: 'remove' },
+  { field: 'comment', maskingType: 'remove' },
+
+  // `X.text` at the paths the audit actually caught. The structural pass covers
+  // the rest; these are here so a reader can see the finding in the rule set.
+  { field: 'code.text', maskingType: 'remove' },
+  { field: 'dosageInstruction.text', maskingType: 'remove' },
+  { field: 'presentedForm.title', maskingType: 'remove' },
+
+  // `Reference.display` is a human label for the referenced record, and for a
+  // Patient reference that label IS the patient's name. Note this is
+  // Reference.display ONLY -- Coding.display is a terminology label
+  // ("Hemoglobin") and removing it would destroy clinical meaning while
+  // protecting nobody. A dot-path cannot tell the two apart, which is exactly
+  // why the structural pass keys on the SHAPE of the containing object; these
+  // paths are the subset where the shape is known in advance.
+  { field: 'report.display', maskingType: 'remove' },
+  { field: 'subject.display', maskingType: 'remove' },
+  { field: 'patient.display', maskingType: 'remove' },
+  { field: 'performer.display', maskingType: 'remove' },
+  { field: 'requester.display', maskingType: 'remove' }
 ];
 
 /**

@@ -10,6 +10,7 @@ import {
   GLOBAL_ATTACHMENT_MASKING_RULES,
   GLOBAL_META_MASKING_RULES,
   GLOBAL_REFERENCE_MASKING_RULES,
+  GLOBAL_FREE_TEXT_MASKING_RULES,
   NarrativePolicy,
   PHIClassifierOptions
 } from '../types/phi-types.js';
@@ -319,7 +320,16 @@ export class PHIClassifier {
       // PHIMaskingEngine's reference rewriting is idempotent, so applying the
       // rule twice yields the same token, and the duplicate documents the
       // intent at the site a reader looks for it.
-      ...GLOBAL_REFERENCE_MASKING_RULES
+      ...GLOBAL_REFERENCE_MASKING_RULES,
+      // Free text. Hoisted here for the same reason as the references above,
+      // found the same way: the `switch` below has no `case` AT ALL for
+      // Condition, MedicationRequest, Procedure or CarePlan, so all four
+      // received only this global layer -- and this global layer had nothing for
+      // prose. Observation's `{ note: remove }` sat three lines away in the same
+      // `switch`, which is what made the gap look like a per-type decision
+      // rather than an omission. See GLOBAL_FREE_TEXT_MASKING_RULES, and
+      // PHIMaskingEngine.scrubFreeText() for the structural half.
+      ...GLOBAL_FREE_TEXT_MASKING_RULES
     ];
   }
 

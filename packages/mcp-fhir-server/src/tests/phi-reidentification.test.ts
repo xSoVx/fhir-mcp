@@ -569,8 +569,17 @@ describe('re-identification: the passes are bounded and non-destructive', () => 
     ) as Record<string, unknown>;
 
     const attachment = asObject(asObject(asArray(masked.content)[0]).attachment);
+    // `contentType` carries this test's whole point: 'application/pdf' contains
+    // a slash, survives, and is NOT rewritten into a pseudonym reference. If the
+    // reference parser ever widens to match non-reference strings, this fails.
     expect(attachment.contentType).toBe('application/pdf');
-    expect(attachment.title).toBe('a/b');
+    // `attachment.title` was the second vehicle for the same assertion until
+    // finding B: `title` is free text (Attachment.title held the canary on
+    // DiagnosticReport.presentedForm[]) and is now removed by
+    // PHIMaskingEngine.scrubFreeText(). Its removal is asserted here rather than
+    // deleted, so this test still fails if the free-text pass regresses -- the
+    // slash-parsing guarantee above is unaffected either way.
+    expect(attachment.title).toBeUndefined();
   });
 });
 

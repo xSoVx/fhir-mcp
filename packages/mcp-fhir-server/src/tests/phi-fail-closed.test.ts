@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach } from '@jest/globals';
 import { PhiGuard, parsePhiGuardMode, PHI_GUARD_MODES } from '../security/phi-guard.js';
-import { AuditLogger } from '../security/audit-logger.js';
+import { AuditLogger, AUDIT_HASH_PATTERN } from '../security/audit-logger.js';
 import { FhirTools } from '../tools/fhir-tools.js';
 import { PhiGuardConfig } from '../types/config.js';
 
@@ -24,7 +24,7 @@ import { PhiGuardConfig } from '../types/config.js';
 
 // Repointed at integration: lane B declared a fourth copy of the literal.
 // It lives in exactly one module now (conflict 1).
-import { CANARY } from './fixtures/canary.js';
+import { CANARY, LEGACY_UNSALTED_SHA256 } from './fixtures/canary.js';
 
 const SAFE_CONFIG: PhiGuardConfig = { mode: 'safe', maskFields: [], removeFields: [] };
 
@@ -328,14 +328,85 @@ describe('Finding 7 - the audit sink itself does not become a PHI store', () => 
     expect(auditLogger.events[0].operation).toBe('phi.masking_failure');
   });
 
-  test('hashIdentifier is stable, non-reversible in shape, and not the input', () => {
+  test('hashIdentifier is stable within a process, and is not the input', () => {
     const h1 = AuditLogger.hashIdentifier(CANARY);
     const h2 = AuditLogger.hashIdentifier(CANARY);
 
     expect(h1).toBe(h2);
     expect(h1).not.toContain(CANARY);
-    expect(h1).toMatch(/^[0-9a-f]{16}$/);
+    // Shape is asserted against the PRODUCER's exported pattern rather than a
+    // regex copied to the call site. The previous version of this test pinned
+    // /^[0-9a-f]{16}$/ -- the literal shape of the vulnerable construction --
+    // under the name "non-reversible in shape", so the test was certifying the
+    // bug. A shape assertion cannot speak to reversibility at all; the test
+    // below is the one that can.
+    expect(h1).toMatch(AUDIT_HASH_PATTERN);
     expect(AuditLogger.hashIdentifier('')).toBe('empty');
+  });
+
+  test('THE FINDING A REGRESSION: a logged hash is not sha256(id) truncated', () => {
+    // This is the regression that must never return, so it is asserted
+    // DIRECTLY against the attack rather than against a shape.
+    //
+    // The original: AuditLogger.hashIdentifier computed
+    // sha256(value).substring(0, 16) beneath a docstring calling itself "not a
+    // reversible identifier on its own". A live patient id was recovered from a
+    // real audit line by direct comparison -- the logged 05ed50b66d21a25a is
+    // sha256('137230016')[0..15], exactly. LEGACY_UNSALTED_SHA256 computes that
+    // same construction over the canary (fixtures/canary.ts, where it is
+    // documented as "equivalent to publishing the ID"), so comparing against it
+    // reproduces the attack rather than a description of it.
+    const legacy = LEGACY_UNSALTED_SHA256;
+
+    // Anti-vacuity: prove the comparison value is the real attack before
+    // asserting anything does not equal it. If the fixture ever stopped
+    // computing the legacy digest, an inequality assertion against it would
+    // pass for the wrong reason.
+    expect(legacy).toMatch(/^[0-9a-f]{16}$/);
+    expect(legacy).toHaveLength(16);
+
+    const logged = AuditLogger.hashIdentifier(CANARY);
+
+    // Prove the function actually produced something first.
+    expect(typeof logged).toBe('string');
+    expect(logged.length).toBeGreaterThan(0);
+
+    expect(logged).not.toBe(legacy);
+    expect(logged).not.toContain(legacy);
+    // Not merely a different truncation of the same unkeyed digest, either.
+    expect(logged).not.toContain(legacy.slice(0, 8));
+  });
+
+  test('the audit hash is KEYED: rotating the key changes it', () => {
+    // The property that distinguishes a keyed hash from a digest, asserted
+    // behaviourally. A bare sha256 is a pure function of its input and is
+    // therefore INVARIANT under key rotation -- so this test fails closed if
+    // anyone reintroduces one, independently of the shape and the inequality
+    // above.
+    const keyA = Buffer.alloc(32, 0xa1);
+    const keyB = Buffer.alloc(32, 0xb2);
+
+    AuditLogger.rotateHashKey(keyA);
+    const underA = AuditLogger.hashIdentifier(CANARY);
+    // Deterministic under a fixed key, or "changes on rotation" would be
+    // indistinguishable from "changes every call".
+    expect(AuditLogger.hashIdentifier(CANARY)).toBe(underA);
+
+    AuditLogger.rotateHashKey(keyB);
+    const underB = AuditLogger.hashIdentifier(CANARY);
+
+    expect(underB).not.toBe(underA);
+    // Restoring the key restores the hash: the key is the ONLY thing that
+    // changed, so this rules out a nonce or a timestamp being responsible.
+    AuditLogger.rotateHashKey(keyA);
+    expect(AuditLogger.hashIdentifier(CANARY)).toBe(underA);
+
+    // And neither is the legacy digest.
+    expect(underA).not.toBe(LEGACY_UNSALTED_SHA256);
+    expect(underB).not.toBe(LEGACY_UNSALTED_SHA256);
+
+    // A key too weak to key anything is refused rather than stretched.
+    expect(() => AuditLogger.rotateHashKey(Buffer.alloc(8))).toThrow();
   });
 
   test('no console.* in src/tools or src/security receives a resource or bare error', async () => {

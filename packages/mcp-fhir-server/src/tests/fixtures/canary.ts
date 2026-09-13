@@ -350,3 +350,214 @@ export function bundleWithPatientEntry(canary: string = CANARY): JsonObject {
     ]
   };
 }
+
+/* ---------------------------------------------------------------------------
+ * Lane-J fixtures: FREE TEXT on the clinical types with no `case` arm.
+ *
+ * `PHIClassifier.getResourceSpecificMaskingRules()` had no `case` at all for
+ * Condition, MedicationRequest, Procedure or CarePlan, so each received only the
+ * global layer -- which had no free-text rule. Each fixture below plants the
+ * canary in exactly the fields that finding named, and nowhere else, so a
+ * failure says which surface regressed rather than only that something did.
+ * ------------------------------------------------------------------------ */
+
+/** Condition: `note[].text` and `code.text`. */
+export function conditionWithFreeText(canary: string = CANARY): JsonObject {
+  return {
+    resourceType: 'Condition',
+    id: 'cond-1',
+    subject: { reference: 'Patient/p1' },
+    // A real coding SURVIVES masking; only the free-text `.text` beside it goes.
+    // Asserting both in one fixture is what stops the fix from being "delete the
+    // whole CodeableConcept".
+    code: {
+      coding: [{ system: 'http://snomed.info/sct', code: '73211009', display: 'Diabetes mellitus' }],
+      text: `Diabetes, per chart for ID ${canary}`
+    },
+    note: [{ text: `Patient ${canary} reports poor control.` }]
+  };
+}
+
+/** MedicationRequest: `note[].text` and `dosageInstruction[].text`. */
+export function medicationRequestWithFreeText(canary: string = CANARY): JsonObject {
+  return {
+    resourceType: 'MedicationRequest',
+    id: 'medreq-1',
+    status: 'active',
+    intent: 'order',
+    subject: { reference: 'Patient/p1' },
+    dosageInstruction: [{ text: `500mg twice daily -- dispense to ${canary}` }],
+    note: [{ text: `Called patient ${canary} to confirm.` }]
+  };
+}
+
+/** Procedure: `note[].text` and `report[].display` (a Reference.display). */
+export function procedureWithFreeText(canary: string = CANARY): JsonObject {
+  return {
+    resourceType: 'Procedure',
+    id: 'proc-1',
+    status: 'completed',
+    subject: { reference: 'Patient/p1' },
+    code: {
+      coding: [{ system: 'http://snomed.info/sct', code: '80146002', display: 'Appendectomy' }]
+    },
+    report: [
+      {
+        reference: 'DiagnosticReport/dr-1',
+        // Reference.display -- NOT Coding.display. The masking pass must tell
+        // these apart: the Coding.display above has to survive.
+        display: `Operative report for ${canary}`
+      }
+    ],
+    note: [{ text: `Uneventful recovery, ${canary}.` }]
+  };
+}
+
+/** CarePlan: `note[].text` and `description`. */
+export function carePlanWithFreeText(canary: string = CANARY): JsonObject {
+  return {
+    resourceType: 'CarePlan',
+    id: 'cp-1',
+    status: 'active',
+    intent: 'plan',
+    subject: { reference: 'Patient/p1' },
+    description: `Diabetes management plan for ID ${canary}`,
+    note: [{ text: `Reviewed with ${canary} at clinic.` }]
+  };
+}
+
+/**
+ * DiagnosticReport: `presentedForm[].title` and `presentedForm[].url`.
+ *
+ * `.data` is ALREADY stripped by GLOBAL_ATTACHMENT_MASKING_RULES, and it is
+ * present here on purpose: `url` addresses the same blob `data` carried, so a
+ * masked report that dropped `data` and kept `url` leaked the identical content
+ * behind one redirect.
+ */
+export function diagnosticReportWithFreeText(canary: string = CANARY): JsonObject {
+  return {
+    resourceType: 'DiagnosticReport',
+    id: 'dr-2',
+    status: 'final',
+    subject: { reference: 'Patient/p1' },
+    code: { coding: [{ system: 'http://loinc.org', code: '58410-2', display: 'CBC panel' }] },
+    presentedForm: [
+      {
+        contentType: 'application/pdf',
+        size: 2048,
+        title: `Lab report -- ${canary}`,
+        url: `https://files.example.org/reports/${canary}.pdf`,
+        data: Buffer.from(canary, 'utf8').toString('base64')
+      }
+    ]
+  };
+}
+
+/**
+ * A resource type with NO `case` arm in getResourceSpecificMaskingRules() that is
+ * nevertheless IDENTIFIABLE in RESOURCE_PHI_MATRIX.
+ *
+ * Finding B is a defect of CLASS, not of list: the four missing `case` arms were
+ * symptoms. A fix that enumerates those four passes every per-type test and fails
+ * this one, so this is the only fixture here that distinguishes "closed the four
+ * holes" from "closed the category".
+ *
+ * WHY ServiceRequest, AND WHY NOT A MADE-UP TYPE
+ * ---------------------------------------------
+ * This fixture was first written with an invented type ('NutritionOrder'), and
+ * MUTATION TESTING caught that as a FALSE GATE. A type absent from
+ * RESOURCE_PHI_MATRIX classifies as RESTRICTED, and
+ * DEFAULT_MASKING_RULES[RESTRICTED] is `{ field: '*', maskingType: 'remove' }` --
+ * every field is deleted regardless of any free-text rule. The test passed with
+ * the free-text fix ripped out entirely, because it had been proving the
+ * RESTRICTED wildcard rather than the fix.
+ *
+ * ServiceRequest is the real analogue of where Condition, MedicationRequest,
+ * Procedure and CarePlan stood when they leaked: IDENTIFIABLE, so genuinely
+ * rule-masked rather than wiped, and with no `case` arm of its own. Any
+ * replacement must satisfy BOTH halves, and the test asserts that non-PHI
+ * clinical content survives precisely so a regression to wildcard-wipe behaviour
+ * cannot make it pass again.
+ *
+ * `orderDetail[].text` and `locationReference[].display` are the STRUCTURAL-ONLY
+ * probes: neither path appears in GLOBAL_FREE_TEXT_MASKING_RULES, so only
+ * PHIMaskingEngine.scrubFreeText() can reach them.
+ */
+export function unenumeratedTypeWithFreeText(canary: string = CANARY): JsonObject {
+  return {
+    resourceType: 'ServiceRequest',
+    id: 'svcreq-1',
+    status: 'active',
+    intent: 'order',
+    subject: { reference: 'Patient/p1' },
+
+    // A real coding, asserted to SURVIVE. This is the anti-wildcard guard: if
+    // this element disappears the resource was wiped rather than masked, and any
+    // canary-absence assertion over it is worthless.
+    code: {
+      coding: [{ system: 'http://loinc.org', code: '24627-2', display: 'Chest CT' }],
+      text: `CT chest for ${canary}`
+    },
+
+    // Declared-layer surfaces.
+    description: `Imaging request for ${canary}`,
+    title: `Request ${canary}`,
+    comment: `Discussed with ${canary}.`,
+    note: [{ text: `Patient ${canary} prefers morning slots.` }],
+
+    // STRUCTURAL-ONLY surfaces: no declared path reaches either of these.
+    orderDetail: [{ text: `With contrast -- ID ${canary}` }],
+    locationReference: [{ reference: 'Location/l1', display: `Clinic of ${canary}` }]
+  };
+}
+
+/** Every free-text fixture, with the surfaces each one is guarding. */
+export const FREE_TEXT_FIXTURES: ReadonlyArray<{
+  resourceType: string;
+  surfaces: string[];
+  build: (canary?: string) => JsonObject;
+}> = [
+  {
+    resourceType: 'Condition',
+    surfaces: ['note[].text', 'code.text'],
+    build: conditionWithFreeText
+  },
+  {
+    resourceType: 'MedicationRequest',
+    surfaces: ['note[].text', 'dosageInstruction[].text'],
+    build: medicationRequestWithFreeText
+  },
+  {
+    resourceType: 'Procedure',
+    surfaces: ['note[].text', 'report[].display'],
+    build: procedureWithFreeText
+  },
+  {
+    resourceType: 'CarePlan',
+    surfaces: ['note[].text', 'description'],
+    build: carePlanWithFreeText
+  },
+  {
+    resourceType: 'DiagnosticReport',
+    surfaces: ['presentedForm[].title', 'presentedForm[].url'],
+    build: diagnosticReportWithFreeText
+  },
+  {
+    resourceType: 'ServiceRequest',
+    surfaces: [
+      'no case arm, IDENTIFIABLE -- the class test',
+      'orderDetail[].text and locationReference[].display are structural-only'
+    ],
+    build: unenumeratedTypeWithFreeText
+  }
+];
+
+/**
+ * A `resourceType` carrying the canary, for finding C.
+ *
+ * The value observed in a real audit record. It is attacker-controlled free text
+ * that reaches the audit stream with NO credentials -- it only has to fail
+ * validation first, and failing validation is exactly what a probe does. Built
+ * from CANARY rather than written out, so the literal stays in this module.
+ */
+export const CANARY_RESOURCE_TYPE = `Patient${CANARY}`;

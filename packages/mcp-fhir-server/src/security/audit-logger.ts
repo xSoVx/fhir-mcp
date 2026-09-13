@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
+import { RESOURCE_PHI_MATRIX } from '../types/phi-types.js';
 
 
 /**
@@ -33,7 +34,13 @@ const AUDIT_SAFE_KEYS: ReadonlySet<string> = new Set([
 
   // What was attempted, by class only.
   'operation',
-  'resourceType',
+  // `resourceType` is DELIBERATELY ABSENT from this list and must stay absent.
+  // It is caller-controlled free text that reaches the audit stream with no
+  // credentials, so it is CONSTRAINED rather than allowlisted -- see
+  // AuditLogger.safeResourceType(), which sanitizeMetadata() applies before this
+  // allowlist is ever consulted. Putting the key back here would restore the
+  // leak; if that branch is ever deleted instead, absence from this list means
+  // the field is DROPPED, which is the correct direction to fail.
   'phiLevel',
   'accessGranted',
   'accessDenied',
@@ -112,6 +119,139 @@ const AUDIT_HASHED_KEYS: ReadonlySet<string> = new Set([
   'mrn',
   'reference'
 ]);
+/**
+ * Per-process key for audit identifier hashing.
+ *
+ * WHY A KEY AT ALL
+ * ----------------
+ * What was here was `sha256(value).substring(0, 16)` under a docstring
+ * claiming it was "not a reversible identifier on its own". That claim was
+ * false, and its falsity was demonstrated rather than argued: a live patient id
+ * was recovered from an audit line by direct comparison, because the logged
+ * `05ed50b66d21a25a` IS `sha256('137230016')[0..15]`. An unkeyed digest of a
+ * low-entropy identifier is an ENCODING of that identifier, not a protection of
+ * it -- the Israeli national ID space is ~10^8 once the check digit is
+ * accounted for, so the complete table is minutes of GPU time.
+ *
+ * This repo already knew that. `tests/fixtures/canary.ts` computes the
+ * byte-identical value, names it LEGACY_UNSALTED_SHA256, and documents it as
+ * "equivalent to publishing the ID". Two parts of one codebase held opposite
+ * beliefs about the same expression, and the comment is what let the wrong one
+ * survive review -- which is why the docstring below now states the property
+ * the code actually has, and no more than that.
+ *
+ * The construction is now HMAC-SHA256, which is what
+ * `PHIMaskingEngine.hashValue()` already does for pseudonym tokens. That part
+ * is reuse rather than reinvention.
+ *
+ * THE KEY IS DELIBERATELY NOT PHIMaskingEngine's SESSION KEY
+ * ---------------------------------------------------------
+ * Sharing it is tempting, and the argument for it is real: an auditor holding a
+ * masked export and an audit line could then join them on subject identity,
+ * since both tokens would derive from one secret. It is still the wrong choice,
+ * for three reasons that all reduce to the two streams having different
+ * LIFETIMES:
+ *
+ *   1. RETENTION. The masking key is ephemeral on purpose -- fresh random bytes
+ *      per construction, never persisted, rotatable, precisely so that two
+ *      exports months apart share no mapping (see hashValue()). Audit records
+ *      are retained for years (HIPAA 164.316(b)(2) says six) and are the one
+ *      artefact expected to stay correlatable across that whole window. A key
+ *      whose lifetime is one process cannot serve a record whose lifetime is
+ *      six years: every restart would emit a different hash for the same
+ *      patient, and the trail would lose exactly the correlating power
+ *      AUDIT_HASHED_KEYS exists to preserve.
+ *   2. ROTATION COUPLING. `rotateSessionKey()` clears the pseudonym cache.
+ *      That is correct for masking and silent corruption for auditing: a
+ *      rotation mid-run would re-key the audit stream in place, so one log file
+ *      would hold two different hashes for one patient with nothing recording
+ *      that the scheme changed underneath it. Misleading a reviewer is worse
+ *      than telling them less.
+ *   3. BLAST RADIUS. Audit logs are shipped off-box, to a SIEM with a different
+ *      operator and a different threat model; masked resources go to a model.
+ *      One key for both means a compromise of either context de-anonymises both
+ *      streams at once.
+ *
+ * The correlation argument also has a better answer than key-sharing.
+ * `traceId` is already on every record, already per-request, and is the correct
+ * join key between an audit line and the response it describes. Joining the two
+ * streams on SUBJECT identity is a re-identification capability, not a feature
+ * to design for.
+ *
+ * DURABILITY, AND WHY THE DEFAULT IS STILL RANDOM
+ * ----------------------------------------------
+ * Set AUDIT_HASH_KEY (>= 32 bytes, hex or base64) to make hashes stable across
+ * restarts, which is what a deployment that actually reviews its audit trail
+ * wants. Unset, the key is random per process, so correlation is scoped to one
+ * process lifetime. That is a loss of UTILITY and not of SAFETY -- an ephemeral
+ * key is still non-invertible -- so it is the right direction for the default to
+ * fail, and there is deliberately no startup requirement to supply one.
+ */
+let auditHashKey: Buffer | undefined;
+
+/** Minimum accepted audit key length, and the size of a minted one. */
+const AUDIT_HASH_KEY_MIN_BYTES = 32;
+
+/** Resolve AUDIT_HASH_KEY, or mint an ephemeral key. See the block above. */
+function resolveAuditHashKey(): Buffer {
+  if (auditHashKey !== undefined) return auditHashKey;
+
+  const configured = process.env.AUDIT_HASH_KEY;
+  if (configured !== undefined && configured !== '') {
+    const looksHex = /^[0-9a-fA-F]+$/.test(configured) && configured.length % 2 === 0;
+    const decoded = looksHex
+      ? Buffer.from(configured, 'hex')
+      : Buffer.from(configured, 'base64');
+    // A key too short to be worth having is REJECTED, not stretched. Silently
+    // accepting a four-byte secret would put a brute-forceable hash back behind
+    // a config option whose name reads as though it had secured something.
+    if (decoded.length < AUDIT_HASH_KEY_MIN_BYTES) {
+      throw new Error(
+        `AUDIT_HASH_KEY must decode to at least ${AUDIT_HASH_KEY_MIN_BYTES} bytes (hex or base64)`
+      );
+    }
+    auditHashKey = decoded;
+    return auditHashKey;
+  }
+
+  auditHashKey = randomBytes(AUDIT_HASH_KEY_MIN_BYTES);
+  return auditHashKey;
+}
+
+/**
+ * Prefix on every audit identifier hash.
+ *
+ * Distinct from PHIMaskingEngine's `PT_` on purpose. The two token namespaces
+ * come from DIFFERENT KEYS and must never be joined, so a reader needs to tell
+ * at a glance which namespace a token belongs to -- otherwise `AH_x` failing to
+ * match `PT_y` reads as "two different patients" when it actually means "two
+ * different keys".
+ */
+export const AUDIT_HASH_PREFIX = 'AH_';
+
+/** Digest characters kept after the prefix. 16 base64url chars is ~96 bits. */
+const AUDIT_HASH_LENGTH = 16;
+
+/**
+ * Shape of an audit identifier hash, for gates and log consumers.
+ *
+ * Exported so an assertion does not have to re-derive the regex at a call site
+ * where it would drift away from the producer.
+ */
+export const AUDIT_HASH_PATTERN = /^AH_[A-Za-z0-9_-]{16}$/;
+
+/**
+ * Emitted in place of a `resourceType` that is not in RESOURCE_PHI_MATRIX.
+ *
+ * Parenthesised and lower-case so it cannot collide with a real FHIR type name,
+ * and so a reader can tell "we rejected what the caller sent" apart from "the
+ * producer had nothing to send" (RESOURCE_TYPE_UNKNOWN).
+ */
+export const RESOURCE_TYPE_UNRECOGNISED = '(unrecognised)';
+
+/** The producers' placeholder for "no resource type available". */
+export const RESOURCE_TYPE_UNKNOWN = 'unknown';
+
 export interface AuditEvent {
   timestamp: string;
   traceId: string;
@@ -155,6 +295,19 @@ export class AuditLogger {
     if (auditEvent.resourceId !== undefined) {
       auditEvent.resourceIdHash = AuditLogger.hashIdentifier(auditEvent.resourceId);
       delete auditEvent.resourceId;
+    }
+
+    // `resourceType` is caller-controlled on every tool entry point: the tool
+    // handlers build their SecurityContext from the RAW args (fhir-tools.ts
+    // handleSearch/handleRead/handleCreate/handleUpdate all read
+    // `args.resourceType` before validation), so a record describing a
+    // validation FAILURE is populated from the value that failed. Constrained
+    // here, at the single choke point, rather than at the producers -- a
+    // guarantee expressed once per call site is a guarantee missing from every
+    // call site nobody got to, which is the defect shape this file already
+    // documents twice.
+    if (auditEvent.resourceType !== undefined) {
+      auditEvent.resourceType = AuditLogger.safeResourceType(auditEvent.resourceType);
     }
 
     // `error` is a failure CLASS, never a message: a thrown error routinely
@@ -228,13 +381,48 @@ export class AuditLogger {
   }
 
   /**
-   * One-way hash of a direct identifier, for correlation without exposure.
-   * Truncated to 16 hex chars: enough to correlate within a log stream,
-   * not a reversible identifier on its own.
+   * KEYED one-way hash of a direct identifier, for correlation without
+   * exposure.
+   *
+   * HMAC-SHA256 under the process audit key (see the AUDIT_HASH_KEY block
+   * above, which also records why that key is not PHIMaskingEngine's),
+   * truncated to AUDIT_HASH_LENGTH base64url characters and prefixed `AH_`.
+   *
+   * The truncation bounds log size; it is NOT what provides the security
+   * property. The KEY is. Stating it that way round matters, because the
+   * previous docstring credited the truncation -- "truncated to 16 hex chars:
+   * ... not a reversible identifier on its own" -- and that sentence is how a
+   * plainly invertible construction survived review for as long as it did. An
+   * unkeyed digest is invertible by enumeration at ANY truncation; a shorter
+   * prefix makes it more collision-prone, not less reversible.
+   *
+   * Do not "simplify" this back to a bare digest. A regression test asserts the
+   * output is not `sha256(value).substring(0, 16)`.
    */
   static hashIdentifier(value: string): string {
     if (value === '') return 'empty';
-    return createHash('sha256').update(value).digest('hex').substring(0, 16);
+    const digest = createHmac('sha256', resolveAuditHashKey())
+      .update(value)
+      .digest('base64url')
+      .slice(0, AUDIT_HASH_LENGTH);
+    return AUDIT_HASH_PREFIX + digest;
+  }
+
+  /**
+   * Replace the process audit hash key.
+   *
+   * Mirrors `PHIMaskingEngine.rotateSessionKey()`. There is no cache to clear
+   * here because hashIdentifier is pure, but note what rotation costs a reader:
+   * one log file would then hold two hashes for one subject. A rotation belongs
+   * at a log boundary, not in the middle of one.
+   */
+  static rotateHashKey(newKey: Buffer = randomBytes(AUDIT_HASH_KEY_MIN_BYTES)): void {
+    if (!Buffer.isBuffer(newKey) || newKey.length < AUDIT_HASH_KEY_MIN_BYTES) {
+      throw new Error(
+        `rotateHashKey requires a Buffer of at least ${AUDIT_HASH_KEY_MIN_BYTES} bytes`
+      );
+    }
+    auditHashKey = newKey;
   }
   private generateTraceId(): string {
     return Math.random().toString(36).substring(2) + Date.now().toString(36);
@@ -272,6 +460,13 @@ export class AuditLogger {
     const dropped: string[] = [];
 
     for (const [key, value] of Object.entries(data)) {
+      // Constrained, not allowlisted. This is the SECOND of the two places the
+      // raw resourceType reached an audit record; the first is in log() above.
+      if (key === 'resourceType') {
+        clean.resourceType = AuditLogger.safeResourceType(value);
+        continue;
+      }
+
       if (AUDIT_HASHED_KEYS.has(key)) {
         if (typeof value === 'string') {
           clean[`${key}Hash`] = AuditLogger.hashIdentifier(value);
@@ -336,6 +531,59 @@ export class AuditLogger {
     return value.length > AUDIT_MAX_STRING
       ? `${value.substring(0, AUDIT_MAX_STRING)}...[truncated]`
       : value;
+  }
+
+  /**
+   * Constrain `resourceType` to the vocabulary this server actually knows.
+   *
+   * WHAT WAS WRONG
+   * --------------
+   * `resourceType` was on AUDIT_SAFE_KEYS, so it was written verbatim -- at the
+   * top level of the record AND again inside `metadata` (security-middleware.ts
+   * auditSecurityDenial() populates both). A resourceType of
+   * `"Patient000000018"` therefore appeared in plaintext twice in one audit
+   * record, reached with no credentials, on a request that FAILED validation.
+   * That is narrower than the `originalInput` leak it outlived -- one field, and
+   * only on the rejection path -- but it is still attacker-controlled free text
+   * written verbatim into the audit stream: a log-injection and PHI-smuggling
+   * channel that happens to be spelled as a type name.
+   *
+   * WHY CONSTRAIN RATHER THAN HASH OR DROP
+   * --------------------------------------
+   * `id` and `params` were already handled correctly and differently, and the
+   * difference is the DOMAIN of the field, not the field's importance:
+   *
+   *   - `id` has an OPEN domain (any string), so it is HASHED: the value cannot
+   *     be checked against anything, but correlation is worth keeping.
+   *   - `params` has UNBOUNDED content, so it is DROPPED: nothing about it can
+   *     be salvaged safely.
+   *   - `resourceType` has a CLOSED, KNOWN domain -- it is a FHIR type name --
+   *     so a third option is available that is strictly better than either.
+   *     Check it against the vocabulary and emit it only if it is a member.
+   *
+   * Hashing would be actively wrong here, and wrong in exactly the way finding A
+   * was: a hash over a ~50-element domain is reversible by enumeration on sight,
+   * so it would look protected while protecting nothing. Dropping would work but
+   * costs the operational fact -- which resource CLASS was touched -- on every
+   * record, including the overwhelming majority that are legitimate.
+   *
+   * An unrecognised type becomes RESOURCE_TYPE_UNRECOGNISED. That is the
+   * allowlist's usual cost, paid the usual way: a resource type this server
+   * genuinely starts supporting is invisible in the audit trail until it is added
+   * to RESOURCE_PHI_MATRIX -- once, visibly, by whoever adds it -- rather than
+   * every unrecognised string being published forever. Note the matrix is
+   * consulted with hasOwnProperty, not `in` or a truthy lookup: otherwise
+   * `resourceType: "constructor"` would pass by inheriting from Object.
+   */
+  static safeResourceType(value: unknown): string {
+    if (typeof value !== 'string' || value === '') return RESOURCE_TYPE_UNKNOWN;
+    // The producers' own placeholder for "no type available" (fhir-tools.ts and
+    // phi-authorization-engine.ts both pass it literally). Reserved so an
+    // internal 'unknown' is not reported as a rejected caller value.
+    if (value === RESOURCE_TYPE_UNKNOWN) return RESOURCE_TYPE_UNKNOWN;
+    return Object.prototype.hasOwnProperty.call(RESOURCE_PHI_MATRIX, value)
+      ? value
+      : RESOURCE_TYPE_UNRECOGNISED;
   }
 
   /**

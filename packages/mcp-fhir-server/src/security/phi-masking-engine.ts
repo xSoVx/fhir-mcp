@@ -105,6 +105,64 @@ const EXTENSION_ELEMENTS: readonly string[] = ['extension', 'modifierExtension']
 type MutableJson = Record<string, unknown>;
 
 /**
+ * FREE-TEXT element names -- the category scrubFreeText() closes.
+ *
+ * Every one of these is human-authored prose that FHIR does not constrain, and
+ * that export pipelines routinely fill with the patient banner. They are matched
+ * by NAME at any depth rather than by path, because the per-type/per-path
+ * approach is precisely what failed: see GLOBAL_FREE_TEXT_MASKING_RULES for the
+ * five resource types this was confirmed leaking on.
+ *
+ * `text` is in this set but is only removed when its value is a STRING. That
+ * single condition separates the two unrelated FHIR elements that share the
+ * name: `CodeableConcept.text` / `Annotation.text` / `Dosage.text` (string,
+ * prose, removed here) from `DomainResource.text` (a Narrative OBJECT, handled
+ * by GLOBAL_NARRATIVE_MASKING_RULES, which can also SCRUB rather than remove it
+ * under narrativePolicy 'scrub'). Keying on the value's type rather than on the
+ * path is what lets one rule serve both without the narrative policy losing
+ * control of the narrative.
+ */
+const FREE_TEXT_ELEMENTS = ['text', 'description', 'title', 'comment'] as const;
+
+/**
+ * Keys that make an object an Attachment rather than something else with a
+ * `url`.
+ *
+ * `url` is removed ONLY inside an Attachment. It cannot be removed by name: an
+ * `Extension` is `{ url, ... }` where the url is the extension's IDENTITY, and a
+ * canonical resource (ValueSet, CodeSystem) carries its identity in a top-level
+ * `url` too. Requiring one DISTINCTIVE Attachment key separates them -- a
+ * scrubbed extension is `{ url }` or `{ url, extension }` and matches none of
+ * these, while `presentedForm[]: { title, url }` matches on `title`.
+ */
+const ATTACHMENT_DISTINCTIVE_KEYS = [
+  'contentType',
+  'data',
+  'size',
+  'hash',
+  'creation',
+  'title',
+  'language'
+] as const;
+
+/**
+ * Keys that make an object a Coding, in which `display` is a TERMINOLOGY label
+ * and must survive.
+ *
+ * This is the `display` half of the same distinction. `Reference.display` is a
+ * human label for a referenced record, and for a Patient reference that label is
+ * the patient's name -- `{ reference: 'Patient/x', display: 'Tamar Cohen' }`.
+ * `Coding.display` is "Hemoglobin". Removing both would de-identify nobody extra
+ * and would strip the clinical meaning out of every coded element in the
+ * resource, which is the "de-identifier that corrupts clinical data" failure
+ * mode GLOBAL_REFERENCE_MASKING_RULES warns about at length.
+ *
+ * The distinction is in the SHAPE of the containing object, not in the path, so
+ * a dot-path rule genuinely cannot make it and this pass can.
+ */
+const CODING_DISTINCTIVE_KEYS = ['system', 'code', 'version', 'userSelected'] as const;
+
+/**
  * PHI Masking Engine
  * Applies various masking strategies to protect sensitive health information
  */
@@ -188,6 +246,14 @@ export class PHIMaskingEngine {
 
     const maskedResource = this.deepClone(resource);
     this.scrubExtensions(maskedResource, new Set<unknown>());
+
+    // FREE TEXT (finding B). Runs unconditionally, for the same reason
+    // scrubExtensions() does: a pass that has to be SELECTED is a pass that gets
+    // forgotten for the next resource type someone adds. Runs AFTER
+    // scrubExtensions so that extensions have already been rebuilt down to
+    // `{ url, extension }` -- which is what keeps this pass from mistaking an
+    // Extension.url for an Attachment.url.
+    this.scrubFreeText(maskedResource, new Set<unknown>());
 
     // RE-IDENTIFICATION PASSES (lane I). Both run BEFORE any rule, and the
     // order between them does not matter: they touch disjoint keys (`id` vs
@@ -394,6 +460,106 @@ export class PHIMaskingEngine {
       }
     }
     return kept;
+  }
+
+  /**
+   * Structurally remove every FREE-TEXT element in the graph -- at ANY depth, on
+   * ANY element, on ANY resource type.
+   *
+   * WHY THIS IS NOT (ONLY) A MASKING RULE
+   * ------------------------------------
+   * `getResourceSpecificMaskingRules()` had no `case` arm at all for Condition,
+   * MedicationRequest, Procedure or CarePlan, so each got only the global layer,
+   * and the global layer had no free-text rule. Observation, three lines away in
+   * the same `switch`, DID have `{ note: remove }`. So the defect was never
+   * uniform absence -- it was inconsistency between rule sets, and a fix that
+   * adds the four missing `case` arms closes four holes and leaves the class
+   * open for the fifth type someone adds.
+   *
+   * GLOBAL_FREE_TEXT_MASKING_RULES is the declared half of the fix and is worth
+   * having: it is inspectable, diffable and testable. But `MaskingRule.field` is
+   * a fixed dot-path, and prose appears at paths no finite list enumerates --
+   * `stage[].summary.text`, `activity[].detail.description`, a CodeableConcept
+   * inside a contained resource, an element a future FHIR release adds. So the
+   * guarantee has to be structural or it is not a guarantee. Same two-layer
+   * split, and same argument, as references and extensions before it.
+   *
+   * WHAT IS DELIBERATELY LEFT ALONE, AND WHY IT IS SHAPE AND NOT PATH
+   * ----------------------------------------------------------------
+   * Two element names are ambiguous, and in both cases the ambiguity is in the
+   * VALUE or the SIBLINGS rather than in the path -- which is why this pass can
+   * resolve them and a dot-path rule cannot:
+   *
+   *   - `text`: removed only when it is a STRING. An OBJECT `text` is a
+   *     Narrative and belongs to the narrative policy, which may scrub rather
+   *     than remove it.
+   *   - `display`: removed unless the containing object is Coding-shaped, so
+   *     `Reference.display` ("Tamar Cohen") goes and `Coding.display`
+   *     ("Hemoglobin") stays.
+   *   - `url`: removed only inside an Attachment-shaped object, so an
+   *     `Extension.url` and a canonical `ValueSet.url` survive.
+   *
+   * Shapes are computed BEFORE any key on the object is removed, so removing
+   * `title` cannot change whether the same object still looks like an Attachment
+   * for the purpose of its `url`.
+   *
+   * KNOWN RESIDUAL: an Attachment that carries `url` and NOTHING else is
+   * indistinguishable from a canonical URL by shape, so its `url` survives this
+   * pass. That is what the declared `presentedForm.url`,
+   * `content.attachment.url` and siblings in GLOBAL_ATTACHMENT_MASKING_RULES are
+   * for: the paths where the shape is known in advance do not need to be
+   * inferred. The two layers cover each other's residuals, which is the reason
+   * for keeping both.
+   */
+  private scrubFreeText(node: unknown, seen: Set<unknown>): void {
+    if (!node || typeof node !== 'object' || seen.has(node)) {
+      return;
+    }
+    // Visited-once, never un-marked -- same contract as scrubExtensions:
+    // deepClone preserves shared references, so a node reachable twice has
+    // already been scrubbed, and this terminates on a cyclic graph.
+    seen.add(node);
+
+    if (Array.isArray(node)) {
+      node.forEach(item => this.scrubFreeText(item, seen));
+      return;
+    }
+
+    const record = node as MutableJson;
+
+    // Shape decisions are taken over the ORIGINAL key set, before anything on
+    // this object is removed.
+    const isAttachment = ATTACHMENT_DISTINCTIVE_KEYS.some(key =>
+      Object.prototype.hasOwnProperty.call(record, key)
+    );
+    const isCoding = CODING_DISTINCTIVE_KEYS.some(key =>
+      Object.prototype.hasOwnProperty.call(record, key)
+    );
+
+    for (const key of Object.keys(record)) {
+      const value = record[key];
+
+      if (FREE_TEXT_ELEMENTS.includes(key as (typeof FREE_TEXT_ELEMENTS)[number])) {
+        // A string `text` is CodeableConcept/Annotation/Dosage prose. An object
+        // `text` is a Narrative: leave it to the narrative policy.
+        if (typeof value === 'string') {
+          record[key] = undefined;
+          continue;
+        }
+      }
+
+      if (key === 'display' && typeof value === 'string' && !isCoding) {
+        record[key] = undefined;
+        continue;
+      }
+
+      if (key === 'url' && typeof value === 'string' && isAttachment) {
+        record[key] = undefined;
+        continue;
+      }
+
+      this.scrubFreeText(value, seen);
+    }
   }
 
   private resolveNestedRules(child: any): MaskingRule[] {
