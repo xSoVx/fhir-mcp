@@ -255,7 +255,7 @@ This is intentional unlinkability, but it means **any client that caches or stor
 
 ### Known gaps
 
-Free text is **not** masked on Condition (`note[].text`, `code.text`), MedicationRequest (`note[]`, `dosageInstruction[].text`), Procedure (`note[]`, `report[].display`), CarePlan (`description`) or DiagnosticReport (`presentedForm[].title`, `.url`). Observation and Encounter are clean. If you search those types, expect clinical notes to come through intact. See [SECURITY.md](SECURITY.md#known-open-security-issues).
+Free text on Condition, MedicationRequest, Procedure, CarePlan and DiagnosticReport was previously unmasked. Free-text elements (`note[].text`, `code.text`, `dosageInstruction[].text`, `report[].display`, `description`, `presentedForm[].title`) are now covered by a global rule set applied to every resource type. See [SECURITY.md](SECURITY.md#known-open-security-issues).
 
 ## Audit Logging
 
@@ -263,7 +263,7 @@ Every operation is logged with a timestamp, trace ID, operation type, success/fa
 
 Records go to **stderr** by default, because stdout is the MCP protocol channel. Set `AUDIT_SINK=stdout` if you are already scraping stdout.
 
-Metadata passes a structural allowlist — an unanticipated key is dropped rather than published. Note the open issue: the `resourceIdHash` field in audit records is an unsalted SHA-256 truncated to 16 hex characters and is **reversible** for real patient ids. Treat current audit logs as PHI-bearing. See [SECURITY.md](SECURITY.md#1-resourceidhash-is-reversible--live-phi-exposure).
+Metadata passes a structural allowlist — an unanticipated key is dropped rather than published. The `resourceIdHash` field in audit records is a keyed HMAC-SHA256 (`AH_` prefix); an earlier revision used an unsalted truncated SHA-256 that was reversible. See [SECURITY.md](SECURITY.md#1-resourceidhash-is-reversible--live-phi-exposure).
 
 ## Testing
 
@@ -359,6 +359,6 @@ The server has no verbosity setting. It writes its startup banner and all audit 
 ## Next Steps
 
 - [Prompt Library](PROMPTS.md) — LLM usage patterns
-- [Security Guide](SECURITY.md) — production deployment, PHI details, **and the four known open issues**
+- [Security Guide](SECURITY.md) - production deployment, PHI details, and the four issues the live audit found (three fixed, one open)
 - [QA-REPORT.md](QA-REPORT.md) — current test status
 - `packages/examples/` — client implementations

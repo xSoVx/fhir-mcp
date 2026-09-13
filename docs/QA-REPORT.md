@@ -11,7 +11,7 @@
 | **Suites** | 12 passed, 2 failed, 14 total |
 | **Regressions** | 0 |
 | **Known failures** | 8, all enumerated with reasoning in `test-baseline.json` |
-| **Assessment** | Not production ready. Four known open security issues, one a live PHI exposure. |
+| **Assessment** | Not production ready. Three of four audit findings fixed; one open design question, plus five untriaged pre-existing baseline failures. |
 
 ## Scope of this report
 
@@ -83,17 +83,17 @@ Plus standalone scripts outside jest: `scripts/lane-g-authz-leak-probe.mjs`, `sc
 
 - **No coverage measurement is reported here.** `npm run test:coverage` exists; no threshold is enforced and no figure is claimed. The previous "100%" was unsubstantiated.
 - **The suite does not test the deployed artifact.** Jest runs against `src/`; `package.json` `main`/`bin`, `npm start`, `npm run start:http` and the Dockerfile all consume `dist/`, which is gitignored. A green run says nothing about a stale `dist/`. Run `npm run build` before testing runtime behaviour.
-- **No test covers the four open security issues below** — that is what makes them open.
+- **No test covered the four audit findings below** - that is how they stayed open. Three now have regression tests; the fourth is a design decision, not a defect.
 - No penetration testing, dependency scanning or container scanning results are recorded on this branch.
 
-## Open security issues
+## Security issues found by the live audit
 
-Carried here from `README.md` so this report cannot be read as a clean bill of health.
+Carried here from `README.md` so this report cannot be read as a clean bill of health. Three are fixed; the fourth is an open design question.
 
-1. **`resourceIdHash` is reversible.** `AuditLogger.hashIdentifier` is unsalted, unkeyed `sha256` truncated to 16 hex (`audit-logger.ts:235-238`). A live patient id was recovered from a log line by direct comparison with `sha256(id)`. The repository's own canary module defines the identical construction as `LEGACY_UNSALTED_SHA256` and calls it "equivalent to publishing the ID" (`tests/fixtures/canary.ts:298-310`).
-2. **Free text unmasked on Condition, MedicationRequest, Procedure, CarePlan, and partially DiagnosticReport.** Those types have no `case` arm in `getResourceSpecificMaskingRules()`. Observation and Encounter are clean — this is inconsistency between rule sets, not uniform absence.
-3. **`resourceType` is echoed verbatim into audit logs** on an unauthenticated, pre-validation denial path (`fhir-tools.ts:335` → `security-middleware.ts:432,437`). Allowlisted values are length-bounded but not character-filtered: a log-injection channel.
-4. **`PHILevel.MINIMAL` unreachable** — the open design question above.
+1. **`resourceIdHash` was reversible - FIXED.** `AuditLogger.hashIdentifier` was unsalted, unkeyed `sha256` truncated to 16 hex. A live patient id was recovered from a log line by direct comparison with `sha256(id)`. The repository's own canary module defines the identical construction as `LEGACY_UNSALTED_SHA256` and calls it "equivalent to publishing the ID". Now a keyed HMAC-SHA256 with an `AH_` prefix, with a regression test asserting the digest differs from `sha256(id).substring(0,16)`.
+2. **Free text unmasked on Condition, MedicationRequest, Procedure, CarePlan and partially DiagnosticReport - FIXED.** Those types had no `case` arm at all. Closed as a class rather than a list: `GLOBAL_FREE_TEXT_MASKING_RULES` applies unconditionally to every resource type.
+3. **`resourceType` echoed verbatim into audit logs - FIXED.** An unauthenticated, pre-validation denial path wrote caller-controlled text into the audit stream. `resourceType` is now absent from the audit allowlist and passes through `AuditLogger.safeResourceType()`.
+4. **`PHILevel.MINIMAL` unreachable - STILL OPEN.** The design question above; three tests remain quarantined pending a decision.
 
 ## Assessment
 

@@ -42,7 +42,7 @@ The runtime value is the one that reaches MCP clients in the server identificati
   - `originalInput` (a sanitized copy of the whole request) is no longer written to audit records.
   - The authorization catch block logs the error **class** only (`AuditLogger.errorClass`), never `error.message`. A forced throw during PHI authorization had produced `error: "boom for patient <name> MRN <id>"` in the audit stream.
   - Audit metadata now passes a recursive structural **allowlist** instead of a shallow keyword denylist. The denylist had written given names, family names and a nine-digit national ID into the log in clear text because `name`, `identifier` and `id` were not on it.
-- `resourceId` in audit records replaced by `resourceIdHash`. **This hash is reversible — see Known issues.**
+- `resourceId` in audit records replaced by `resourceIdHash`, a keyed HMAC-SHA256 with an `AH_` prefix. An earlier revision of this branch used an unsalted truncated `sha256` that was reversible; that is fixed.
 - `PhiGuard` construction now fails closed; an `AuditLogger` is required.
 - `identifier` masking made unconditional and independent of the per-resource-type `switch`, rather than expressed once per type.
 - `text.div` treated as untrusted HTML and dropped by default.
@@ -72,14 +72,17 @@ The runtime value is the one that reaches MCP clients in the server identificati
 - `README.md` and `QA-REPORT.md` corrected. Withdrawn claims, each verified false against this branch: "19/19 tests passed (100% success rate)" (the suite could not run until lane A; the real figure is 250/258); "Phase 1 Security" and "QA" marked complete on the roadmap; SMART on FHIR / OAuth2 Authorization Code + PKCE / client credentials described as implemented (only two orphan type declarations exist); "ML-powered" PHI classification and anomaly detection (a static matrix plus regex field patterns); FHIR `AuditEvent` emission (none); tamper-proof and cryptographically validated audit logs (`console.error` output); `birthDate → "YYYY-**-**"` (removed outright); `identifier → "***"` (replaced with `PT_` tokens); bearer authentication required for all HTTP requests (only when `AUTH_TOKEN` is set — otherwise the bridge is open); and five documented environment variables read by nothing (`CORS_CREDENTIALS`, `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX_REQUESTS`, `FHIR_RATE_LIMIT_MAX`, `WRITE_RATE_LIMIT_MAX`).
 - Documented the `dist/` build trap: `dist/` is gitignored but load-bearing for `main`, `bin`, `npm start`, `npm run start:http` and the Dockerfile, while jest runs against `src/`. A green suite does not mean the deployed path is fixed.
 - Documented that `npm run start:http` uses POSIX `VAR=x` prefix syntax and therefore does not work in PowerShell. PowerShell equivalents added throughout.
-- Documented the four known open security issues rather than omitting them.
+- Documented the four security issues found by the live audit rather than omitting them.
 
-### Known issues (open on this branch)
+### Fixed after the live audit
 
-1. `AuditLogger.hashIdentifier` is unsalted, unkeyed `sha256` truncated to 16 hex (`audit-logger.ts:235-238`) and is therefore reversible for low-entropy identifier spaces; a live patient id was recovered from a log line. The repository's own `LEGACY_UNSALTED_SHA256` (`tests/fixtures/canary.ts:298-310`) defines the identical construction and calls it equivalent to publishing the ID.
-2. Free text unmasked on Condition (`note[].text`, `code.text`), MedicationRequest (`note[]`, `dosageInstruction[].text`), Procedure (`note[]`, `report[].display`), CarePlan (`description`) and DiagnosticReport (`presentedForm[].title`, `.url`). Observation and Encounter are clean, so this is inconsistency between rule sets rather than uniform absence.
-3. `resourceType` is echoed verbatim into audit logs on an unauthenticated, pre-validation denial path; allowlisted values are length-bounded but not character-filtered — a log-injection channel.
-4. `phi-classifier.ts:109-110` sets `hasDirectIdentifiers` on `id` **or** `identifier`, making `PHILevel.MINIMAL` unreachable. Three tests are quarantined pending the design decision, not because they are unfixable.
+1. `AuditLogger.hashIdentifier` was unsalted, unkeyed `sha256` truncated to 16 hex and therefore reversible for low-entropy identifier spaces; a live patient id was recovered from a log line by direct comparison with `sha256(id)`. The repository's own `LEGACY_UNSALTED_SHA256` fixture defines the identical construction and calls it equivalent to publishing the ID. Now a keyed HMAC-SHA256 emitting an `AH_`-prefixed token, with the false "not a reversible identifier" docstring removed and a regression test asserting the digest is not equal to `sha256(id).substring(0,16)`.
+2. Free text was unmasked on Condition (`note[].text`, `code.text`), MedicationRequest (`note[]`, `dosageInstruction[].text`), Procedure (`note[]`, `report[].display`), CarePlan (`description`) and DiagnosticReport (`presentedForm[].title`, `.url`) - those types had no `case` arm at all. Observation and Encounter were clean, so this was inconsistency between rule sets rather than uniform absence. Closed as a class: `GLOBAL_FREE_TEXT_MASKING_RULES` applies to every resource type unconditionally, so a type added later inherits the protection.
+3. `resourceType` was echoed verbatim into audit logs on an unauthenticated, pre-validation denial path; allowlisted values were length-bounded but not character-filtered, so newlines and JSON survived - a log-injection channel. `resourceType` is now absent from the audit allowlist and passes through `AuditLogger.safeResourceType()`, which emits a placeholder for any value not in `RESOURCE_PHI_MATRIX`.
+
+### Still open
+
+4. `phi-classifier.ts:109-110` sets `hasDirectIdentifiers` on `id` **or** `identifier`, making `PHILevel.MINIMAL` unreachable. Three tests are quarantined pending the design decision, not because they are unfixable. Narrowing the rule reduces protection; keeping it means `MINIMAL` is dead code and the tests should expect `identifiable`.
 
 Unverified: `DocumentReference` is `IDENTIFIABLE` in the PHI matrix and carries masking rules, but is absent from `InputValidator.isValidResourceType`'s allowlist, so it is unreachable through the tool surface. Nothing in the repository records whether that is intentional.
 

@@ -7,7 +7,7 @@ This guide provides ready-to-use prompts and patterns for working with FHIR-MCP 
 > 1. **Identity is required.** Without `MCP_SERVICE_PRINCIPAL_ID` configured, every IDENTIFIABLE read returns `HEALTHCARE_COMPLIANCE_VIOLATION` and no resource body. None of the patterns below will return data. See [QUICKSTART.md](QUICKSTART.md#identity-is-required-for-phi).
 > 2. **Identifiers come back as `PT_` tokens**, not values — and those tokens change on every server restart. A prompt that asks the model to remember or correlate an id across sessions will silently correlate the wrong things.
 > 3. **`birthDate` is removed, not partially masked.** There is no age to compute and no partial date to parse; ask for neither.
-> 4. **Free text is not masked on Condition, MedicationRequest, Procedure, CarePlan or DiagnosticReport.** Prompts that surface `note[]`, `code.text` or `description` from those types can surface a patient name straight into the model context. See [SECURITY.md](SECURITY.md#2-free-text-unmasked-on-several-clinical-resource-types).
+> 4. **Free text is masked globally.** `note[]`, `code.text`, `description` and related elements were previously unmasked on Condition, MedicationRequest, Procedure, CarePlan and DiagnosticReport; they are now covered by a global rule set. See [SECURITY.md](SECURITY.md#2-free-text-unmasked-on-several-clinical-resource-types).
 
 ## System Prompt
 
@@ -295,7 +295,7 @@ In `safe` mode the server has already applied these before the model sees anythi
 - Failed operations generate audit events; the error **class** is recorded, never the message
 - Trace IDs link related operations together
 - Records go to stderr by default (stdout is the MCP protocol channel)
-- **Caveat:** the `resourceIdHash` field is an unsalted SHA-256 truncated to 16 hex and is reversible for real patient ids. Treat audit logs as PHI-bearing.
+- **Note:** the `resourceIdHash` field is a keyed HMAC-SHA256 (`AH_` prefix). Audit records still describe PHI access, so retain them accordingly.
 
 ## Advanced Patterns
 

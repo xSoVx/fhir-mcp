@@ -6,7 +6,7 @@
 
 FHIR-MCP is an open-source MCP (Model Context Protocol) server that lets LLMs interact with FHIR servers and HL7 terminology services behind a PHI de-identification layer. It provides FHIR read/search/create/update, terminology operations, PHI classification and masking, and audit logging.
 
-> **Status: pre-production.** This branch (`integration/phase2`) carries nine lanes of PHI remediation (A–I) that closed a set of leaks found by a live audit against a real FHIR server. Several of those leaks were open in every release before this branch. There remain **four known open security issues** — see [Known open issues](#known-open-issues) — one of which (reversible audit id hashing) is a live PHI exposure. Read that section before deploying against real patient data.
+> **Status: pre-production.** This branch carries nine lanes of PHI remediation (A-I) plus fixes for four issues found by a live audit against a real FHIR server. Several of those leaks were open in every release before this branch. Three of the four audit findings are fixed; one remains an open design question - see [Security issues found by the live audit](#security-issues-found-by-the-live-audit). Read that section before deploying against real patient data.
 
 ## Features
 
@@ -258,51 +258,47 @@ Changes on this branch:
 - `originalInput` is **no longer written**. It previously carried a sanitized copy of the whole request.
 - Metadata passes through a **structural allowlist**, not a keyword denylist, and it is recursive. A key nobody anticipated is dropped rather than published.
 - The authorization catch block logs the error **class** only (`AuditLogger.errorClass`), never `error.message` — a thrown message routinely quotes the resource that broke it.
-- `resourceId` is replaced by `resourceIdHash`. **See open issue 1: this hash is reversible.**
+- `resourceId` is replaced by `resourceIdHash`, a keyed HMAC-SHA256 (`AH_` prefix). It was previously an unsalted `sha256` truncated to 16 hex and was reversible; see issue 1 below.
 - **Denied reads now produce an audit record.** They previously produced none: `fhir-tools` returned as soon as `allowed` was false and never reached `logFhirOperation`, so the single most reviewable event this control produces left no trace.
 
-## Known open issues
+## Security issues found by the live audit
 
-These are open on this branch. They are listed here rather than in an issue tracker because overclaiming is the specific failure mode that produced most of the defects lanes A–I were created to fix.
+A live audit against a real FHIR server (HAPI R4) found four issues beyond the nine remediation lanes. Three are fixed on this branch; the fourth is an open design question. They are recorded here rather than only in an issue tracker because overclaiming is the specific failure mode that produced most of the defects lanes A-I were created to fix.
 
-### 1. `resourceIdHash` is reversible (live PHI exposure)
+### 1. `resourceIdHash` was reversible - FIXED
 
-`AuditLogger.hashIdentifier` is `sha256(value)` truncated to 16 hex characters, **unsalted and unkeyed** (`audit-logger.ts:235-238`). Its own docstring claims it is "not a reversible identifier on its own." That is false for the low-entropy identifier spaces this server handles. A live patient id was recovered from a log line by direct comparison against `sha256(id)`.
+`AuditLogger.hashIdentifier` was `sha256(value)` truncated to 16 hex characters, unsalted and unkeyed, under a docstring claiming it was "not a reversible identifier on its own." That was false for the low-entropy identifier spaces this server handles: a live patient id was recovered from a log line by direct comparison against `sha256(id)`.
 
-The repository already condemns this exact construction: `src/tests/fixtures/canary.ts:298-310` defines `LEGACY_UNSALTED_SHA256` as the identical computation and describes it as "equivalent to publishing the ID," because a complete rainbow table over the Israeli ID space is minutes of GPU time. The audit logger and the canary module disagree with each other, and the canary module is right.
+The repository already condemned the identical construction - `src/tests/fixtures/canary.ts` defines it as `LEGACY_UNSALTED_SHA256` and describes it as "equivalent to publishing the ID." The audit logger and the canary module disagreed, and the canary module was right.
 
-Fix direction: key the digest with a per-deployment secret (HMAC), as `PHIMaskingEngine` already does for pseudonyms.
+Now a keyed HMAC-SHA256, matching what `PHIMaskingEngine` already did for pseudonyms, emitting an `AH_`-prefixed token. The false docstring is gone. A regression test asserts the emitted digest is **not** equal to `sha256(id).substring(0,16)`.
 
-### 2. Free text is not masked on several clinical resource types
+### 2. Free text unmasked on several clinical resource types - FIXED
 
-`PHIClassifier.getResourceSpecificMaskingRules()` has `case` arms for Patient, RelatedPerson, Observation, Encounter, Coverage, Organization, Practitioner, DocumentReference and DiagnosticReport — and **no arm at all** for Condition, MedicationRequest, Procedure or CarePlan. Those types receive the global rules only, so their free-text elements survive:
+`getResourceSpecificMaskingRules()` had `case` arms for Patient, RelatedPerson, Observation, Encounter, Coverage, Organization, Practitioner, DocumentReference and DiagnosticReport - and no arm at all for Condition, MedicationRequest, Procedure or CarePlan, so their free-text elements survived masking: `note[].text` and `code.text` on Condition, `note[]` and `dosageInstruction[].text` on MedicationRequest, `note[]` and `report[].display` on Procedure, `description` on CarePlan, `presentedForm[].title` and `.url` on DiagnosticReport.
 
-| Resource | Unmasked free text |
-|---|---|
-| Condition | `note[].text`, `code.text` |
-| MedicationRequest | `note[]`, `dosageInstruction[].text` |
-| Procedure | `note[]`, `report[].display` |
-| CarePlan | `description` |
-| DiagnosticReport | `presentedForm[].title`, `presentedForm[].url` (`conclusion` and `presentedForm[].data` *are* handled) |
+Observation and Encounter were clean, so this was inconsistency between rule sets rather than uniform absence - the guarantee had been written once per resource type, and was therefore missing for every type nobody got to. Clinical notes are exactly where a patient name or ID ends up in practice.
 
-Observation (`note` removed) and Encounter are clean. This is therefore **inconsistency between rule sets, not uniform absence** — the guarantee was written once per resource type, so it is missing for every resource type nobody got to. Clinical notes are exactly where a patient name or ID ends up in practice.
+Closed as a class, not a list: `GLOBAL_FREE_TEXT_MASKING_RULES` is applied unconditionally to every resource rather than enumerated per type, so a resource type added later inherits the protection instead of silently missing it.
 
-### 3. `resourceType` is a log-injection channel
+### 3. `resourceType` log-injection channel - FIXED
 
-`handleRead` copies `args.resourceType` straight into the `SecurityContext` (`fhir-tools.ts:335`). On the denial path, `auditSecurityDenial` writes `context.resourceType` verbatim into the audit record — twice, as a top-level field and inside metadata (`security-middleware.ts:432,437`). That path runs **before validation succeeds and without authentication**.
+`handleRead` copied `args.resourceType` straight into the `SecurityContext`, and on the denial path `auditSecurityDenial` wrote it verbatim into the audit record - twice, as a top-level field and inside metadata. That path runs before validation succeeds and without authentication, so an unauthenticated caller could write chosen text, including forged record boundaries, into the audit stream.
 
-`resourceType` is on the audit allowlist (`audit-logger.ts:36`). Allowlisted *keys* are checked against `/^[A-Za-z0-9_]{1,40}$/`, but allowlisted *values* are only length-bounded by `boundString` — no character filtering, so newlines and JSON survive. An unauthenticated caller can therefore write chosen text, including forged record boundaries, into the audit stream.
+`resourceType` is now deliberately absent from the audit allowlist and passes through `AuditLogger.safeResourceType()`, which emits a placeholder for any value not present in `RESOURCE_PHI_MATRIX`.
 
 ### 4. Open design question: is a logical `id` a direct identifier?
 
-`phi-classifier.ts:109-110` sets `hasDirectIdentifiers` when a key is `identifier` **or** `id`, and line 159 then upgrades `MINIMAL` → `IDENTIFIABLE`. Since virtually every resource fetched from a server carries an `id`, **`PHILevel.MINIMAL` is unreachable in practice**.
+This one is **not** fixed, and deliberately so.
 
-Three tests are quarantined in `test-baseline.json` pending a decision, and they are not defects to be silently fixed — the decision has a real cost either way:
+`phi-classifier.ts:109-110` sets `hasDirectIdentifiers` when a key is `identifier` **or** `id`, and line 159 then upgrades `MINIMAL` to `IDENTIFIABLE`. Since virtually every resource fetched from a server carries an `id`, `PHILevel.MINIMAL` is unreachable in practice.
+
+Three tests are quarantined in `test-baseline.json` pending a decision. They are not defects to be silently fixed - the decision costs something either way:
 
 - Narrowing `hasDirectIdentifiers` to `identifier` (plus `id` on patient-like types) **reduces protection**.
 - Keeping the rule means `PHILevel.MINIMAL` is dead code and the tests should be changed to expect `identifiable`.
 
-No lane owned this decision and it was deliberately not made during the merge. The other five baseline failures (input sanitization, rate limiting ×3, security headers) are pre-existing and outside the PHI remediation plan; they need their own triage.
+No lane owned this decision and it was deliberately not made during the merge. The other five baseline failures (input sanitization, rate limiting x3, security headers) are pre-existing and outside the PHI remediation plan; they need their own triage.
 
 ### Also unverified
 
@@ -449,7 +445,7 @@ The MCP server's own HTTP transport (`MCP_TRANSPORT=http`) exposes `/healthz` se
 - [x] **Docker**: containerized deployment
 - [x] **Test infrastructure**: jest running under ESM, golden corpus, PHI canary harness, enforced failure baseline (lane A)
 - [x] **PHI remediation lanes A–I**: fail-closed guard construction, masking rules, masking engine, authorization invariant, log-leak closure, caller identity, uniform tokenization
-- [ ] **Security Phase 1**: *not complete.* Four known open issues, one a live PHI exposure. See [Known open issues](#known-open-issues). Previous revisions of this file marked this done; masking was unreachable in production until lane H and three PHI log leaks were open until lane G.
+- [ ] **Security Phase 1**: *not complete.* Three of four audit findings are fixed; one open design question remains, and five pre-existing baseline failures (input sanitization, rate limiting, security headers) are untriaged. See [Security issues found by the live audit](#security-issues-found-by-the-live-audit). Previous revisions of this file marked this done; masking was unreachable in production until lane H and three PHI log leaks were open until lane G.
 - [ ] **QA**: *not complete.* 250/258 with 8 known failures; see [docs/QA-REPORT.md](docs/QA-REPORT.md).
 - [ ] **Phase 2**: real OAuth2 / SMART-on-FHIR token verification, advanced policy engine
 - [ ] **Phase 3**: delete operations, bulk export, R5 support

@@ -2,7 +2,7 @@
 
 Security guidance for deploying FHIR-MCP, covering what the PHI protection layer actually does on the `integration/phase2` branch, what it does not do, and what is still open.
 
-> **Read this first.** Every claim below has been checked against the source on this branch; claims that could not be verified are marked as such. There are **four known open security issues**, one of which is a live PHI exposure in audit logs. Do not treat this document as a compliance attestation.
+> **Read this first.** Every claim below has been checked against the source on this branch; claims that could not be verified are marked as such. A live audit against a real FHIR server found four security issues: three are fixed, one is an open design question. Do not treat this document as a compliance attestation.
 
 ## Threat model and scope
 
@@ -170,7 +170,7 @@ Structured JSON, written with `console.error` to **stderr** by default. stdout i
 | Metadata: recursive structural **allowlist** | The previous shallow keyword denylist (`token\|authorization\|password\|secret\|ssn\|birthdate`) wrote given names, family names and a nine-digit national ID to the log in clear text, because `name`, `identifier` and `id` were not on it. An allowlist inverts the failure mode: an unanticipated key is dropped rather than published. |
 | Authorization catch logs error **class** only | A forced throw during PHI authorization had produced `error: "boom for patient <name> MRN <id>"` in the audit stream |
 | Metadata key names checked against `/^[A-Za-z0-9_]{1,40}$/` | A key name must not become a smuggling channel for a value |
-| `resourceId` → `resourceIdHash` | **See open issue 1 — this hash is reversible** |
+| `resourceId` -> `resourceIdHash` | Keyed HMAC-SHA256, `AH_` prefix. Previously an unsalted truncated `sha256`, which was reversible; fixed - see issue 1 |
 | Denied reads now produce a record | They previously produced none. A refusal that is not recorded cannot be reviewed, and a DLP control whose refusals are invisible cannot be distinguished from one that was never consulted. |
 
 ### What audit logging is not
@@ -188,9 +188,9 @@ Classification is two static mechanisms and nothing else:
 
 This matters for your risk assessment: the system recognises what it was told to recognise. A PHI-bearing field with an unanticipated name is not detected by pattern matching, which is precisely why the structural and allowlist-based defences above carry the real weight.
 
-## Known open security issues
+## Security issues found by the live audit
 
-### 1. `resourceIdHash` is reversible — live PHI exposure
+### 1. `resourceIdHash` was reversible - FIXED
 
 **Severity: high. Status: open.**
 
@@ -212,7 +212,7 @@ The audit logger and the canary module contradict each other, and the canary mod
 
 **OWASP:** A02:2021 Cryptographic Failures; A09:2021 Security Logging and Monitoring Failures.
 
-### 2. Free text unmasked on several clinical resource types
+### 2. Free text unmasked on several clinical resource types - FIXED
 
 **Severity: high. Status: open.**
 
@@ -232,7 +232,7 @@ Clinical notes are where a patient name or ID actually ends up in practice. A Co
 
 **Fix direction:** add the missing arms, or better, hoist free-text handling into the global layer the way `identifier` and references already were.
 
-### 3. `resourceType` log-injection channel
+### 3. `resourceType` log-injection channel - FIXED
 
 **Severity: medium. Status: open.**
 
