@@ -169,7 +169,14 @@ describe('PHI canary', () => {
   // Fixing the masking rules alone will not flip them.
   // --------------------------------------------------------------------------
   describe('end-to-end via PhiGuard [owner: T1.1]', () => {
-    test.failing('does not leak the canary from a Patient read by a clinician', async () => {
+    test('does not leak the canary from a Patient read by a clinician', async () => {
+      // FLIPPED AT LANE I. The authorization hole this case was blocked on was
+      // closed earlier (lane E), which is why the sibling Observation case is
+      // already a plain test(). What kept THIS one red afterwards was the last
+      // unmasked surface on the kitchen-sink Patient: `link[0].other.reference`
+      // = 'Patient/000000018', a raw logical id embedded in a reference string.
+      // Lane I rewrites every Reference in the graph, so the end-to-end path is
+      // now clean for the Patient too.
       const outcome = await maskViaGuard(kitchenSinkPatient(), {
         user: clinician()
       });
@@ -466,14 +473,39 @@ describe('PHI canary', () => {
   });
 
   describe('surface: Reference.reference [owner: T4.x]', () => {
-    test.failing('does not leak a raw id embedded in a reference string', async () => {
-      // `subject.reference` is hashed for Observation, but `Patient/<id>`
-      // strings elsewhere are not rewritten. Closing this properly is
-      // bidirectional pseudonymization (finding 9 / Phase 4).
+    test('does not leak a raw id embedded in a reference string', async () => {
+      // CLOSED AT LANE I. The original note read: "`subject.reference` is hashed
+      // for Observation, but `Patient/<id>` strings elsewhere are not
+      // rewritten." That was right, and a live audit against HAPI showed the
+      // gap was TYPE-DEPENDENT rather than uniform: Observation, Encounter,
+      // DiagnosticReport and DocumentReference carried a `subject` rule;
+      // Condition, Procedure and MedicationRequest did not, and emitted
+      // `Patient/<id>` raw.
+      //
+      // The note also said closing it properly needs bidirectional
+      // pseudonymisation. The OUTBOUND half is what re-identification depends
+      // on and is what landed: every Reference in the graph is rewritten
+      // structurally, and the token comes from the same
+      // PHIMaskingEngine.tokenForSubject() that `Resource.id` uses, so one
+      // patient yields ONE token everywhere in a session instead of a
+      // reference token and a separate `subject`-rule token for the same
+      // person. The INBOUND half (resolving a token in a model's request back
+      // to a real read) is still unbuilt and belongs to whoever owns the
+      // entrypoints; nothing here depends on it.
       const outcome = await maskViaEngine(kitchenSinkPatient(), {
         user: clinician()
       });
       expectMaskingEngineRan(outcome);
+
+      // Non-vacuity: the link element SURVIVES and still says what it pointed
+      // at, so this is not passing because `link` was deleted. A rule that
+      // dropped the element wholesale would satisfy the canary assertion below
+      // while telling the consumer less.
+      const link = asArray(asObject(outcome.maskedResource).link);
+      expect(link).toHaveLength(1);
+      const other = asObject(asObject(link[0]).other);
+      expect(other.reference).toMatch(/^Patient\/PT_[A-Za-z0-9_-]{12}$/);
+
       expect(serialise(asObject(outcome.maskedResource).link)).not.toContain(CANARY);
     });
   });
@@ -559,7 +591,17 @@ describe('PHI canary', () => {
   // the remediation is done.
   // --------------------------------------------------------------------------
   describe('the full red-team assertion [owner: all lanes; flip LAST]', () => {
-    test.failing('leaks the canary nowhere, in any encoding, from the kitchen-sink Patient', async () => {
+    test('leaks the canary nowhere, in any encoding, from the kitchen-sink Patient', async () => {
+      // FLIPPED AT LANE I -- the "flip LAST" case for the Patient fixture.
+      //
+      // This is the whole-output assertion, so it only goes green when every
+      // surface on the fixture is closed: identifier, narrative (literal AND
+      // entity-encoded), contained[], extension[], meta, and -- last of the
+      // nine -- the `Patient/<canary>` inside `link[0].other.reference`. The
+      // Bundle sibling below is still `test.failing`: Bundle is RESTRICTED, so
+      // `{ field: '*' }` strips `entry` and its `toHaveLength(3)` cannot hold.
+      // That is a classification decision recorded on RESOURCE_PHI_MATRIX, not
+      // a leak, and it is not this lane's to flip.
       const outcome = await maskViaEngine(kitchenSinkPatient(), {
         user: clinician()
       });

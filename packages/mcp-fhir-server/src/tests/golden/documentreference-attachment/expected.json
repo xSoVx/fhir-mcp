@@ -1,7 +1,7 @@
 {
   "masked": {
     "resourceType": "DocumentReference",
-    "id": "golden-docref",
+    "id": "<<HASH>>",
     "status": "current",
     "type": {
       "coding": [
@@ -12,7 +12,9 @@
         }
       ]
     },
-    "subject": "<<HASH>>",
+    "subject": {
+      "reference": "<<HASH>>"
+    },
     "content": [
       {
         "attachment": {

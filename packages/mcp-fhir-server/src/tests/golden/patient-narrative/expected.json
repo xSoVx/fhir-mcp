@@ -1,7 +1,7 @@
 {
   "masked": {
     "resourceType": "Patient",
-    "id": "golden-narrative",
+    "id": "<<HASH>>",
     "identifier": "<<HASH>>",
     "name": "***"
   },

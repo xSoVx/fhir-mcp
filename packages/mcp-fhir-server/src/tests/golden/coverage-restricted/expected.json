@@ -1,7 +1,7 @@
 {
   "masked": {
     "resourceType": "Coverage",
-    "id": "golden-coverage"
+    "id": "<<HASH>>"
   },
   "canaryLeaks": {
     "plaintext": false,
