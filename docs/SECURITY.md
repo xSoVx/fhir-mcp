@@ -1,141 +1,325 @@
 # FHIR-MCP Security Guide
 
-This document provides comprehensive security guidance for deploying FHIR-MCP in production environments, including HIPAA compliance considerations, PHI protection strategies, and enterprise security hardening.
+Security guidance for deploying FHIR-MCP, covering what the PHI protection layer actually does on the `integration/phase2` branch, what it does not do, and what is still open.
 
-## 🛡️ Security Overview
+> **Read this first.** Every claim below has been checked against the source on this branch; claims that could not be verified are marked as such. There are **four known open security issues**, one of which is a live PHI exposure in audit logs. Do not treat this document as a compliance attestation.
 
-FHIR-MCP implements **Phase 1 Security Hardening** with enterprise-grade security features designed for healthcare environments handling sensitive patient data.
+## Threat model and scope
 
-### Security Architecture
+FHIR-MCP sits between an LLM client and a FHIR server. Its job is to ensure that what reaches the model is de-identified according to policy, and that every access attempt is recorded. It is not an authorization server, not a FHIR façade with its own access policy engine, and not a substitute for controls on the upstream FHIR server.
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                   Security Layers                          │
-├─────────────────────────────────────────────────────────────┤
-│ 1. Network Security (HTTPS, CORS, Headers)                 │
-│ 2. Input Validation & Sanitization                         │
-│ 3. Rate Limiting & DDoS Protection                         │
-│ 4. Authentication & Authorization                           │
-│ 5. PHI Protection & Classification                          │
-│ 6. Audit Logging & Monitoring                              │
-│ 7. Container Security & Isolation                          │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│ Layer                          │ Implemented on this branch   │
+├──────────────────────────────────────────────────────────────┤
+│ 1. Network (HTTPS/TLS)         │ Deploy behind a TLS proxy    │
+│ 2. Input validation            │ Joi, allowlisted types       │
+│ 3. Rate limiting               │ Yes — see caveat below       │
+│ 4. Caller identity             │ Static service principal     │
+│ 5. Authorization (PHI)         │ Fail-closed engine           │
+│ 6. Masking / de-identification │ Rule-driven, gaps documented │
+│ 7. Audit logging               │ JSON on stderr               │
+│ 8. Container isolation         │ Non-root Alpine image        │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-## 🔒 Phase 1 Security Features (Implemented)
+## Caller identity — mandatory for PHI
 
-### 1. OWASP Compliance
-- **Security Headers**: Complete CSP, HSTS, X-Frame-Options, etc.
-- **Input Sanitization**: Joi-based validation with SQL injection prevention
-- **Content Security Policy**: Strict CSP preventing XSS attacks
-- **Secure Defaults**: Security-first configuration out of the box
+This is the change most likely to break an existing deployment.
 
-### 2. Multi-Tier Rate Limiting
-- **General Rate Limiting**: 100 requests per 15 minutes per IP
-- **FHIR-Specific Limits**: 50 requests per 15 minutes for FHIR operations
-- **Write Operation Limits**: 10 requests per 15 minutes for create/update
-- **PHI-Aware Limiting**: Stricter limits when accessing PHI data
-- **Progressive Delays**: Escalating response delays for repeat offenders
+Before lane H, the tool layer built its `SecurityContext` with no `userId`. Measured against a live FHIR server, the result was that **every IDENTIFIABLE resource was suppressed before masking** — the masking engine never executed in production, while the documentation described it as active.
 
-### 3. Advanced Input Validation
-- **Schema-Based Validation**: Comprehensive Joi schemas for all endpoints
-- **Request Size Limits**: 1MB payload limit with configurable thresholds
-- **Content-Type Validation**: Strict MIME type checking
-- **Parameter Sanitization**: Automatic cleaning of dangerous input patterns
+`src/security/identity.ts` supplies the missing identity. The enforcement point is `performComplianceChecks` in `src/security/security-middleware.ts`:
 
-### 4. Suspicious Activity Detection
-- **IP Tracking**: Automatic blocking of suspicious IP addresses
-- **Pattern Recognition**: Detection of automated attacks and scraping
-- **Failure Rate Monitoring**: Automatic throttling based on error rates
-- **Behavioral Analysis**: ML-powered detection of anomalous usage patterns
+```ts
+if (context.phiLevel === PHILevel.IDENTIFIABLE || context.phiLevel === PHILevel.RESTRICTED) {
+  if (!context.userId)   { violations.push('PHI access requires authenticated user'); blockRequest = true; }
+  if (!context.sessionId || context.sessionId === 'anonymous') { ...; blockRequest = true; }
+}
+```
 
-### 5. PHI Protection Engine
-- **Advanced Classification**: ML-powered detection of sensitive healthcare data
-- **Dynamic Masking**: Context-aware redaction based on sensitivity levels
-- **Safe Mode**: Automatic masking of names, addresses, birth dates, SSNs
-- **Trusted Mode**: Configurable for secure environments with proper access controls
+**With no configured principal, every IDENTIFIABLE or RESTRICTED read returns `HEALTHCARE_COMPLIANCE_VIOLATION` and no resource body.** That is the intended fail-closed behaviour, and an unconfigured deployment behaves bit-for-bit as the old one did: denied.
 
-### 6. Comprehensive Audit System
-- **Structured Logging**: JSON-formatted audit trails with trace IDs
-- **PHI-Safe Logs**: Automatic redaction of sensitive data in audit logs
-- **FHIR AuditEvent**: Standards-compliant audit event emission
-- **Real-time Monitoring**: Live security event tracking and alerting
+### Configuring a principal
 
-### 7. HTTP/SSE Transport Security
-- **Bearer Token Authentication**: Required `Authorization: Bearer <token>` header for all HTTP requests
-- **Transport Mode Selection**: Environment variable `MCP_TRANSPORT` controls stdio vs http mode
-- **Health Monitoring**: Dedicated `/healthz` endpoint for service monitoring
-- **Session Management**: Secure SSE session handling with automatic cleanup
-- **Protocol Compliance**: Full MCP JSON-RPC protocol over HTTP with streaming support
+```powershell
+# PowerShell
+$env:MCP_SERVICE_PRINCIPAL_ID = "svc-analytics"
+$env:MCP_SERVICE_PRINCIPAL_SCOPES = "system/*.read"
+```
 
-## 🏥 HIPAA Compliance Considerations
-
-### Administrative Safeguards
-- **Access Control**: Role-based permissions with least privilege principle
-- **Audit Logging**: Comprehensive activity monitoring with tamper-proof logs
-- **Security Training**: Documentation and training materials for operations staff
-- **Incident Response**: Defined procedures for security breach detection and response
-
-### Physical Safeguards
-- **Container Security**: Non-root user execution with security-optimized Alpine base
-- **Resource Isolation**: Memory and CPU limits to prevent resource exhaustion
-- **Secure Deployment**: Production-ready Docker configuration with security profiles
-
-### Technical Safeguards
-- **Access Controls**: Authentication required for all PHI operations
-- **Audit Controls**: Every PHI access logged with user attribution
-- **Data Integrity**: Cryptographic validation of audit logs and data transfers
-- **Transmission Security**: HTTPS/TLS encryption for all data in transit
-
-## 🔧 Production Deployment Checklist
-
-### Pre-Deployment Security Setup
-
-#### 1. Environment Configuration
 ```bash
-# Required security environment variables
+# bash
+export MCP_SERVICE_PRINCIPAL_ID="svc-analytics"
+export MCP_SERVICE_PRINCIPAL_SCOPES="system/*.read"
+```
+
+The scope set is closed. Anything outside it is a **startup error**, not a silent downgrade — a DLP control should refuse to start rather than quietly resolve to something weaker.
+
+| Scope | Grants | Notes |
+|---|---|---|
+| `patient/*.read` | `patient:read` | |
+| `user/*.read` | `patient:read` | |
+| `system/*.read` | `patient:read` | |
+| `patient/*.write` | `patient:write` | |
+| `user/*.write` | `patient:write` | |
+| `system/*.write` | `patient:write` | |
+| `x-restricted/*.read` | `restricted:read` | Non-standard `x-` prefix on purpose |
+
+Scope *spelling* follows SMART on FHIR so that a future token issuer's `scope` claim maps across without translation. It does not imply a SMART authorization server exists here — it does not.
+
+The RESTRICTED tier (Coverage, Claim, ExplanationOfBenefit, Bundle, Binary) has no SMART equivalent. Reaching it requires `x-restricted/*.read`, which cannot be mistaken for a standard scope and never comes along for the ride with an ordinary read scope.
+
+### What configuration cannot do
+
+By construction, a configured principal always has `roles: []`, never sets `phiAccessLevel`, and has `isEmergencyAccess` pinned `false`. Roles and `phiAccessLevel` are independent grant routes inside the authorization engine; allowing configuration to set them would make the scope table an incomplete statement of what configuration can grant. Emergency access is the only route that returns PHI **unmasked**, and no environment variable can open it.
+
+### Transport binding
+
+| Transport | Provider | Behaviour |
+|---|---|---|
+| stdio | `StaticIdentityProvider` | One principal for the process lifetime |
+| HTTP/SSE | `RequestScopedIdentityProvider` | Principal carried in `AsyncLocalStorage`, entered in `http.ts` **only after** the bearer token is verified. `runWithPrincipal(undefined, …)` explicitly *exits* the store, so no request inherits another's principal. |
+| default | `ANONYMOUS_IDENTITY_PROVIDER` | Returns `undefined` — omitting a provider denies rather than grants |
+
+### HTTP authentication is a shared secret
+
+`AUTH_TOKEN` is a single static bearer token compared with a timing-safe comparison. It is **not** OAuth2, has no expiry, no rotation, no per-user identity and no revocation.
+
+Two consequences worth stating plainly:
+
+- **If `AUTH_TOKEN` is unset, the HTTP bridge is open.** `authenticate()` returns `allowed: true`. It binds no principal, so PHI stays denied — but non-PHI operations are reachable by anyone who can route to the port.
+- **Setting a principal does not authenticate anyone.** It only declares who a verified caller *is*. If you set `MCP_SERVICE_PRINCIPAL_ID` without `AUTH_TOKEN` on the HTTP transport, the startup banner warns about it, and the identity is not bound to unverified requests.
+
+Terminate TLS in front of this and restrict network access to the port. The token travels in a header.
+
+## PHI masking
+
+Masking runs only after authorization allows the read. The rule set is assembled from three sources, deliberately independent of each other so that adding a resource type cannot silently omit the global layer.
+
+### Global rules (every resource type, regardless of the per-type `switch`)
+
+| Rule | Effect |
+|---|---|
+| `identifier` | pseudonym token |
+| narrative `text` / `text.div` | removed by default; `narrativePolicy: 'scrub'` is the alternative |
+| Attachment `.data` at ten paths | removed; `contentType`, `size`, `hash`, `title`, `creation` retained so the model still knows a document exists |
+| `meta.source` | removed — pipelines build it from the record they extracted |
+| `meta.security[].display`, `meta.tag[].display` | removed; `system`+`code` **retained deliberately**, because deleting the confidentiality label would tell a downstream consumer the resource is less sensitive than it is |
+| person-valued `Reference`s | tokenized |
+
+### PHI-level defaults at IDENTIFIABLE
+
+`name` → `***`; `identifier` → token; `birthDate`, `address`, `telecom`, `contact`, `communication` → removed.
+
+`birthDate` is **removed**, not partially masked. Note the rule-set inconsistency behind that: the Patient per-type rule in `phi-classifier.ts` says `birthDate: partial` ("year only"), but the IDENTIFIABLE default says `remove` and is applied first, so `partial` then sees an absent value. `phi-authz-canary.test.ts:113` asserts `masked.birthDate` is `undefined` and passes. The `partial` rule is dead code and should be deleted so the two tables stop disagreeing.
+
+### Structural handling
+
+- **`contained[]` and `Bundle.entry[].resource`** are classified and masked as resources in their own right, not walked as plain objects.
+- **`extension[]` / `modifierExtension[]`** are *rebuilt from a whitelist* rather than filtered by a denylist. `url` survives so the consumer is told which extension was present; every `value[x]` is dropped. This covers extensions on **primitives** via the `_field` sibling (`_birthDate.extension[]`), which has no dot-path and so cannot be expressed as a masking rule at all. `modifierExtension` is included because it carries the same free-form payload and differs only in that ignoring it changes meaning.
+- **RESTRICTED** removes all fields except `resourceType`.
+
+### Pseudonym tokens are per-process
+
+`PT_` + 12 base64url characters, derived as `HMAC-SHA256(sessionKey, value)`. The session key is `crypto.randomBytes(32)` created in the `PHIMaskingEngine` constructor; production constructs the engine with no key (`phi-authorization-engine.ts:250`) and **nothing persists it**.
+
+| Property | Consequence |
+|---|---|
+| Stable within a process | `resource.id` and `Reference.reference` tokenize to the same value across Condition, Observation, Encounter, MedicationRequest, Procedure and DiagnosticReport, so a masked bundle stays internally joinable |
+| Not stable across restarts | The same patient gets a different token after a restart |
+| No persistence path | Cross-session longitudinal linkage is **impossible by design** — a genuine unlinkability property |
+| — | **Any consumer caching `PT_` tokens as stable keys will break silently**, splitting one patient into two records. Treat a token as valid only within the response set it arrived in. |
+
+`rotateSessionKey()` drops every derived pseudonym. There is currently no supported way to supply a stable key from configuration; adding one would trade unlinkability for linkage and should be a deliberate, documented decision.
+
+## Rate limiting
+
+Six buckets, all with a **one-minute** window.
+
+| Bucket | Limit | Key |
+|---|---|---|
+| `default` | 100 / min | |
+| `search` | 50 / min | |
+| `phi_access` | 20 / min | `phi:{userId\|sessionId}` |
+| `write` | 10 / min | `write:{userId\|sessionId}` |
+| `emergency` | 5 / min | |
+| `ip_based` | 200 / min | anonymous requests |
+
+**Caveat.** Two of the eight known test failures are `Security Integration Tests › Rate Limiting`, where the suite observes zero blocked requests where it expects some, plus a third downstream middleware failure. The limiter's behaviour under test does not match its stated intent. Verify against your own traffic before relying on these numbers, and do not treat rate limiting as a control you have evidence for.
+
+Thresholds are **compiled in** and cannot be changed by configuration.
+
+## Input validation
+
+Joi-based, in `src/security/input-validator.ts`.
+
+- `resourceType` is checked against an allowlist of 20 types. **`DocumentReference` is not on it**, despite being `IDENTIFIABLE` in the PHI matrix with its own masking rules — so those rules are unreachable through the tool surface. See open issues.
+- `id` must match `/^[A-Za-z0-9\-_.]+$/`, 1–64 characters.
+- Rejected values are **not interpolated into error messages**, because those messages are returned to the caller *and* handed to the audit logger. Validation failures name the field, not the value. A rejected search-parameter name carries no field at all, since it is arbitrary caller-controlled text.
+
+## Audit logging
+
+Structured JSON, written with `console.error` to **stderr** by default. stdout is the MCP protocol channel — an audit trail written there lands wherever the client pipes the protocol rather than in a log the covered entity controls. `AUDIT_SINK=stdout` restores the old behaviour for deployments already scraping stdout.
+
+### What changed on this branch
+
+| Change | Why |
+|---|---|
+| `originalInput` no longer written | It carried a sanitized copy of the whole request |
+| Metadata: recursive structural **allowlist** | The previous shallow keyword denylist (`token\|authorization\|password\|secret\|ssn\|birthdate`) wrote given names, family names and a nine-digit national ID to the log in clear text, because `name`, `identifier` and `id` were not on it. An allowlist inverts the failure mode: an unanticipated key is dropped rather than published. |
+| Authorization catch logs error **class** only | A forced throw during PHI authorization had produced `error: "boom for patient <name> MRN <id>"` in the audit stream |
+| Metadata key names checked against `/^[A-Za-z0-9_]{1,40}$/` | A key name must not become a smuggling channel for a value |
+| `resourceId` → `resourceIdHash` | **See open issue 1 — this hash is reversible** |
+| Denied reads now produce a record | They previously produced none. A refusal that is not recorded cannot be reviewed, and a DLP control whose refusals are invisible cannot be distinguished from one that was never consulted. |
+
+### What audit logging is not
+
+- **No FHIR `AuditEvent` resources are emitted.** The records are this project's own JSON shape.
+- **Logs are not tamper-proof and there is no cryptographic validation of them.** They are console output. Integrity, retention and write-once storage are the responsibility of whatever collects stderr.
+- **There is no built-in real-time alerting**, and the server creates no log files of its own. It writes to stderr; collecting, shipping and retaining that stream is the deployer's job.
+
+## How classification works
+
+Classification is two static mechanisms and nothing else:
+
+1. a static resource-type matrix (`RESOURCE_PHI_MATRIX` in `src/types/phi-types.ts`), and
+2. regular-expression field-name patterns (`SENSITIVE_FIELD_PATTERNS`: `/name/i`, `/identifier/i`, `/birth/i`, `/address/i`, `/phone/i`, `/email/i`, `/ssn/i`, `/social/i`, `/contact/i`, `/telecom/i`, `/photo/i`, `/image/i`).
+
+This matters for your risk assessment: the system recognises what it was told to recognise. A PHI-bearing field with an unanticipated name is not detected by pattern matching, which is precisely why the structural and allowlist-based defences above carry the real weight.
+
+## Known open security issues
+
+### 1. `resourceIdHash` is reversible — live PHI exposure
+
+**Severity: high. Status: open.**
+
+`AuditLogger.hashIdentifier` (`audit-logger.ts:235-238`):
+
+```ts
+return createHash('sha256').update(value).digest('hex').substring(0, 16);
+```
+
+Unsalted, unkeyed, truncated. Its docstring claims it is "not a reversible identifier on its own." That is false for the identifier spaces this server handles. A live patient id was recovered from a log line by direct comparison against `sha256(id)`.
+
+The repository already condemns this exact construction. `src/tests/fixtures/canary.ts:298-310` computes `LEGACY_UNSALTED_SHA256` identically and documents it as the **pre-fix** behaviour:
+
+> the Israeli ID space is ~10^8 after the check digit, so a complete rainbow table over these values is minutes of GPU time — the value below is therefore equivalent to publishing the ID.
+
+The audit logger and the canary module contradict each other, and the canary module is correct.
+
+**Fix direction:** HMAC the digest with a per-deployment secret, as `PHIMaskingEngine` already does for pseudonyms, and delete the docstring's safety claim. Rotating the key breaks historical log correlation — that trade should be made explicitly.
+
+**OWASP:** A02:2021 Cryptographic Failures; A09:2021 Security Logging and Monitoring Failures.
+
+### 2. Free text unmasked on several clinical resource types
+
+**Severity: high. Status: open.**
+
+`PHIClassifier.getResourceSpecificMaskingRules()` has `case` arms for Patient, RelatedPerson, Observation, Encounter, Coverage, Organization, Practitioner, DocumentReference and DiagnosticReport — and **none** for Condition, MedicationRequest, Procedure or CarePlan. Those types receive only the global rules.
+
+| Resource | Unmasked |
+|---|---|
+| Condition | `note[].text`, `code.text` |
+| MedicationRequest | `note[]`, `dosageInstruction[].text` |
+| Procedure | `note[]`, `report[].display` |
+| CarePlan | `description` |
+| DiagnosticReport | `presentedForm[].title`, `presentedForm[].url` — `conclusion` and `presentedForm[].data` *are* handled |
+
+Observation (`note` → remove) and Encounter are clean. **This is inconsistency between rule sets, not uniform absence** — the same defect shape as the `identifier` and `extension` findings before it: a guarantee expressed once per resource type is missing for every type nobody got to.
+
+Clinical notes are where a patient name or ID actually ends up in practice. A Condition whose structured fields are fully masked can still return `note[0].text: "Patient Yossi Cohen, ID 123456782, seen today"`.
+
+**Fix direction:** add the missing arms, or better, hoist free-text handling into the global layer the way `identifier` and references already were.
+
+### 3. `resourceType` log-injection channel
+
+**Severity: medium. Status: open.**
+
+`handleRead` copies `args.resourceType` straight into the `SecurityContext` (`fhir-tools.ts:335`). On denial, `auditSecurityDenial` writes `context.resourceType` verbatim into the audit record twice — as a top-level field and inside metadata (`security-middleware.ts:432,437`). **That path runs before validation succeeds and without authentication.**
+
+`resourceType` is on the audit allowlist (`audit-logger.ts:36`). Allowlisted *keys* are checked against `/^[A-Za-z0-9_]{1,40}$/`; allowlisted *values* are only length-bounded by `boundString` — no character filtering, so newlines and JSON survive. An unauthenticated caller can write chosen text, including forged record boundaries, into the audit stream, corrupting exactly the artifact a breach investigation depends on.
+
+**Fix direction:** validate `resourceType` against the allowlist before it reaches the `SecurityContext`, or emit a `code`-style substitution (`unknown_resource_type`) rather than the value — the same discipline `input-validator.ts` already applies to its error messages.
+
+**OWASP:** A09:2021 Security Logging and Monitoring Failures; CWE-117 Improper Output Neutralization for Logs.
+
+### 4. Open design question: is a logical `id` a direct identifier?
+
+**Severity: informational. Status: undecided, deliberately.**
+
+`phi-classifier.ts:109-110` sets `hasDirectIdentifiers` when a key is `identifier` **or** `id`; line 159 upgrades `MINIMAL` → `IDENTIFIABLE`. Since nearly every resource fetched from a server carries an `id`, **`PHILevel.MINIMAL` is unreachable in practice**.
+
+Three tests are quarantined in `test-baseline.json` awaiting a decision. This is a question, not a defect:
+
+- Narrowing `hasDirectIdentifiers` to `identifier` (plus `id` on patient-like types) **reduces protection** — a server-assigned `id` can be a re-identification handle when combined with anything else.
+- Keeping the rule means `PHILevel.MINIMAL` is dead code and the three tests should be changed to expect `identifiable`.
+
+No lane owned the decision and it was deliberately not taken during the merge rather than resolved in whichever direction made the tests green.
+
+### Limitation: `DocumentReference` is unreachable
+
+`DocumentReference` is `IDENTIFIABLE` in `RESOURCE_PHI_MATRIX` (`phi-types.ts:105`) and has per-type masking rules, but it is absent from `InputValidator.isValidResourceType`'s 20-entry allowlist (`input-validator.ts:423-430`). Reads and searches for it are rejected at validation, so its masking rules never execute through the tool surface.
+
+**Unverified:** nothing in the repository records whether this is an intentional restriction or an oversight. It is documented as a limitation, not a decision. If it is later added to the allowlist, its masking rules and the tests around them already exist.
+
+## Production deployment
+
+### Environment
+
+```powershell
+# PowerShell
+$env:NODE_ENV = "production"
+$env:PHI_MODE = "safe"
+$env:ENABLE_AUDIT = "true"
+
+# Identity — without this, every IDENTIFIABLE read is denied
+$env:MCP_SERVICE_PRINCIPAL_ID = "svc-production"
+$env:MCP_SERVICE_PRINCIPAL_SCOPES = "system/*.read"
+
+# HTTP transport
+$env:MCP_TRANSPORT = "http"
+$env:PORT = "8080"
+$env:AUTH_TOKEN = "<long random secret>"   # unset = open bridge
+```
+
+```bash
+# bash
 export NODE_ENV=production
-export SECURITY_LOGGING=true
-export REQUIRE_HTTPS=true
 export PHI_MODE=safe
 export ENABLE_AUDIT=true
-
-# MCP Transport Configuration
-export MCP_TRANSPORT=http  # or 'stdio' for direct client integration
-export PORT=8080           # Required for HTTP transport
-
-# HTTP Transport Authentication (REQUIRED for production HTTP mode)
-export AUTH_TOKEN="your-secure-random-token-here"  # Bearer token for HTTP requests
-
-# Network security
-export ALLOWED_ORIGINS="https://your-domain.com,https://app.your-domain.com"
-export CORS_CREDENTIALS=true
-
-# Rate limiting (adjust based on usage patterns)
-export RATE_LIMIT_WINDOW_MS=900000  # 15 minutes
-export RATE_LIMIT_MAX_REQUESTS=100
-export FHIR_RATE_LIMIT_MAX=50
-export WRITE_RATE_LIMIT_MAX=10
+export MCP_SERVICE_PRINCIPAL_ID="svc-production"
+export MCP_SERVICE_PRINCIPAL_SCOPES="system/*.read"
+export MCP_TRANSPORT=http
+export PORT=8080
+export AUTH_TOKEN="<long random secret>"
 ```
 
-#### 2. SSL/TLS Configuration
+`npm run start:http` uses POSIX `VAR=x command` prefix syntax and **fails on PowerShell**. Set the variables first and run `node dist/http.js` directly.
+
+`ALLOWED_ORIGINS`, `REQUIRE_HTTPS` and `SECURITY_LOGGING` are read by the `packages/examples/http-bridge` example only. Setting them has no effect on the MCP server.
+
+### Build before deploying
+
+`dist/` is gitignored but is what `main`, `bin`, `npm start`, `npm run start:http` and the Dockerfile all load. Jest runs against `src/`. **A green test suite does not mean the deployed path carries the fixes.** Run `npm run build` before every deployment and after every pull that touches `src/`; a stale `dist/` will serve pre-remediation masking code while CI stays green.
+
+### TLS termination
+
 ```nginx
-# Example Nginx SSL configuration
 server {
     listen 443 ssl http2;
     server_name your-fhir-mcp-domain.com;
-    
-    ssl_certificate /path/to/certificate.crt;
+
+    ssl_certificate     /path/to/certificate.crt;
     ssl_certificate_key /path/to/private.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
     ssl_prefer_server_ciphers off;
-    
-    # HSTS header
+
     add_header Strict-Transport-Security "max-age=63072000" always;
-    
+
     location / {
-        proxy_pass http://localhost:3001;
+        proxy_pass http://localhost:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -144,273 +328,67 @@ server {
 }
 ```
 
-#### 3. Authentication Setup (Phase 2 - Coming Soon)
-```json
-{
-  "auth": {
-    "enabled": true,
-    "provider": "oauth2",
-    "issuer": "https://your-identity-provider.com",
-    "clientId": "fhir-mcp-client",
-    "scopes": ["patient/*.read", "user/*.read"]
-  }
-}
-```
+### Container hardening
 
-### Docker Security Hardening
+The shipped `Dockerfile` is a multi-stage build on `node:18-alpine` running as a non-root user, and `docker-compose.yml` is the reference deployment. Recommended additions if you are writing your own compose file:
 
-#### 1. Secure Dockerfile
-```dockerfile
-# Use security-optimized base image
-FROM node:18-alpine
-
-# Create non-root user
-RUN addgroup -g 1001 -S fhir-mcp && \
-    adduser -S fhir-mcp -u 1001 -G fhir-mcp
-
-# Install security updates
-RUN apk update && apk upgrade && \
-    rm -rf /var/cache/apk/*
-
-# Set security environment
-ENV NODE_ENV=production
-ENV SECURITY_LOGGING=true
-ENV REQUIRE_HTTPS=true
-
-# Switch to non-root user
-USER fhir-mcp
-
-# Use dumb-init for proper signal handling
-ENTRYPOINT ["dumb-init", "--"]
-```
-
-#### 2. Docker Compose Security
 ```yaml
 services:
   fhir-mcp-bridge:
-    build: .
-    ports:
-      - "3002:3001"
-    
-    # Security configurations
-    security_opt:
-      - no-new-privileges:true
-    
-    # Resource limits
+    security_opt: [ "no-new-privileges:true" ]
+    read_only: true
+    tmpfs: [ "/tmp:noexec,nosuid,size=100m" ]
+    cap_drop: [ ALL ]
     deploy:
       resources:
-        limits:
-          cpus: '1.0'
-          memory: 512M
-    
-    # Read-only root filesystem
-    read_only: true
-    tmpfs:
-      - /tmp:noexec,nosuid,size=100m
-    
-    # Drop all capabilities
-    cap_drop:
-      - ALL
-    
-    # Health monitoring
-    healthcheck:
-      test: ["CMD", "node", "-e", "/* health check code */"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+        limits: { cpus: '1.0', memory: 512M }
 ```
 
-### Monitoring and Alerting
+## HIPAA considerations
 
-#### 1. Security Monitoring
-```javascript
-// Example security monitoring setup
-const securityMetrics = {
-  rateLimitViolations: 0,
-  phiAccessAttempts: 0,
-  authenticationFailures: 0,
-  suspiciousIPs: new Set()
-};
+This section lists what the software contributes toward a Security Rule assessment. **It is not an attestation, and several safeguards are the deployer's responsibility, not the software's.**
 
-// Alert thresholds
-const SECURITY_ALERTS = {
-  RATE_LIMIT_THRESHOLD: 10,
-  PHI_ACCESS_THRESHOLD: 50,
-  AUTH_FAILURE_THRESHOLD: 5
-};
-```
+| Safeguard | Provided by FHIR-MCP | Your responsibility |
+|---|---|---|
+| §164.312(a) Access control | Fail-closed PHI authorization; scope-gated principal | Real user authentication; the shared `AUTH_TOKEN` is not per-user attribution |
+| §164.312(b) Audit controls | Structured record per allowed and denied access | Log shipping, retention, integrity, review. **Issue 1 means ids in current logs are recoverable.** |
+| §164.312(c) Integrity | — | Log write-once storage, backup integrity |
+| §164.312(e) Transmission security | — | TLS termination; the server speaks plain HTTP |
+| §164.308 Administrative | — | Workforce training, incident response, BAAs, risk analysis |
+| §164.310 Physical | Non-root container, resource limits | Host and datacentre controls |
+| De-identification (§164.514) | Rule-driven masking + pseudonymisation | **Neither Safe Harbor nor Expert Determination is claimed.** Open issue 2 means free text on several clinical types is returned intact, which alone defeats Safe Harbor. |
 
-#### 2. Audit Log Analysis
+## Security testing
+
 ```bash
-# Example log analysis commands
-# Monitor PHI access patterns
-grep "PHI_ACCESS" /var/log/fhir-mcp/audit.log | \
-  jq '.timestamp, .user, .operation, .resourceType'
-
-# Detect authentication failures
-grep "AUTH_FAILURE" /var/log/fhir-mcp/security.log | \
-  jq '.ip, .timestamp, .failureReason'
-
-# Rate limiting violations
-grep "RATE_LIMIT_EXCEEDED" /var/log/fhir-mcp/security.log | \
-  jq '.ip, .endpoint, .requestCount'
-```
-
-## 🔐 PHI Protection Configuration
-
-### Safe Mode (Default - Recommended)
-```javascript
-// Automatic PHI masking configuration
-const phiProtection = {
-  mode: 'safe',
-  maskingRules: {
-    names: true,           // Patient.name -> "***"
-    addresses: true,       // Patient.address -> "***"
-    birthDates: true,      // Patient.birthDate -> "YYYY-**-**"
-    identifiers: true,     // Patient.identifier -> "***"
-    telecom: true,         // Patient.telecom -> "***"
-    photos: true          // Patient.photo -> removed
-  },
-  sensitivity: {
-    high: ['SSN', 'MRN', 'drivers-license'],
-    medium: ['phone', 'email'],
-    low: ['gender', 'maritalStatus']
-  }
-};
-```
-
-### Trusted Mode (Secure Environments Only)
-```javascript
-// Use only in environments with proper access controls
-const trustedMode = {
-  mode: 'trusted',
-  requiresAuthentication: true,
-  allowedRoles: ['physician', 'nurse', 'admin'],
-  auditLevel: 'detailed',
-  accessJustification: 'required'
-};
-```
-
-## 📊 Security Testing and Validation
-
-### 1. Security Test Suite
-```bash
-# Run security-focused tests
-npm run test:security
-
-# Vulnerability scanning
+cd packages/mcp-fhir-server
+npm test              # 250/258 on this branch
+npm run test:gate     # + enforce test-baseline.json in both directions
+npm run test:e2e      # scripts/lane-h-e2e.mjs
 npm audit --audit-level high
-
-# Container security scanning
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-  aquasec/trivy image fhir-mcp:latest
 ```
 
-### 2. Penetration Testing Checklist
-- [ ] Input validation bypass attempts
-- [ ] SQL injection testing
-- [ ] XSS vulnerability assessment
-- [ ] Rate limiting effectiveness
-- [ ] Authentication bypass attempts
-- [ ] PHI data leakage testing
-- [ ] Audit log integrity verification
+The PHI-specific suites are the useful security artifact. `phi-canary.test.ts` plants a single canary value in every element a FHIR resource can hide an identifier in and **asserts the leaky path actually ran before asserting the leak is gone** — a non-vacuous test, which is the property the original QA pass lacked. `phi-authz-invariant.test.ts` pins the structural rule that any `allowed: true` at IDENTIFIABLE or above carries a non-empty rule set.
 
-### 3. Compliance Validation
-- [ ] HIPAA Administrative Safeguards implemented
-- [ ] HIPAA Physical Safeguards configured
-- [ ] HIPAA Technical Safeguards operational
-- [ ] Audit logging comprehensive and tamper-proof
-- [ ] PHI protection validated across all endpoints
-- [ ] Access controls properly enforced
+Not performed on this branch: penetration testing, container image scanning, formal dependency review. These are work items, not completed items.
 
-## 🚨 Incident Response Procedures
+## If you suspect a breach
 
-### 1. Security Breach Detection
-```bash
-# Automated monitoring commands
-# Check for suspicious activity
-tail -f /var/log/fhir-mcp/security.log | \
-  grep -E "(RATE_LIMIT_EXCEEDED|AUTH_FAILURE|PHI_UNAUTHORIZED)"
+1. **Contain** — revoke `AUTH_TOKEN`, restrict network access to the port, preserve the audit stream before rotation.
+2. **Assess scope with issue 1 in mind** — `resourceIdHash` values in your existing logs are recoverable by anyone who obtains them. Treat historical audit logs as PHI-bearing until the hash is keyed.
+3. **Check free-text exposure** — if Condition, MedicationRequest, Procedure, CarePlan or DiagnosticReport resources were read, assume clinical notes reached the model unmasked (issue 2).
+4. **Check log integrity** — `resourceType` is attacker-controllable in denial records (issue 3), so audit records may contain forged content.
+5. **Verify the deployed build** — confirm `dist/` was rebuilt from the branch you think is running. A stale `dist/` is an easy way to have been running unremediated code.
 
-# Monitor failed authentication attempts
-grep "AUTH_FAILURE" /var/log/fhir-mcp/security.log | \
-  awk '{print $3}' | sort | uniq -c | sort -nr
-```
+## References
 
-### 2. Breach Response Steps
-1. **Immediate Response**
-   - Block suspicious IP addresses
-   - Enable enhanced logging
-   - Notify security team
-   - Document timeline
-
-2. **Investigation**
-   - Analyze audit logs
-   - Identify compromised data
-   - Assess scope of breach
-   - Collect forensic evidence
-
-3. **Remediation**
-   - Patch security vulnerabilities
-   - Update access controls
-   - Rotate authentication credentials
-   - Implement additional monitoring
-
-4. **Recovery**
-   - Restore service availability
-   - Validate security measures
-   - Update incident response procedures
-   - Conduct post-incident review
-
-## 🔄 Ongoing Security Maintenance
-
-### Regular Security Updates
-- **Weekly**: Review security logs and metrics
-- **Monthly**: Update dependencies and security patches
-- **Quarterly**: Conduct security assessments and penetration testing
-- **Annually**: Full security audit and compliance review
-
-### Security Metrics Dashboard
-```javascript
-// Key security metrics to monitor
-const securityDashboard = {
-  authentication: {
-    successRate: '99.2%',
-    failureCount: 12,
-    blockedIPs: 3
-  },
-  rateLimiting: {
-    violationsToday: 5,
-    topOffenders: ['192.168.1.100', '10.0.0.50']
-  },
-  phiProtection: {
-    recordsProcessed: 1250,
-    sensitiveDataMasked: 340,
-    leakageIncidents: 0
-  },
-  auditCompliance: {
-    logIntegrity: '100%',
-    retentionCompliance: true,
-    accessDocumentation: '95%'
-  }
-};
-```
-
-## 📚 Additional Resources
-
-### Standards and Compliance
 - [HIPAA Security Rule](https://www.hhs.gov/hipaa/for-professionals/security/index.html)
 - [NIST Cybersecurity Framework](https://www.nist.gov/cyberframework)
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/)
+- [CWE-117: Improper Output Neutralization for Logs](https://cwe.mitre.org/data/definitions/117.html)
 - [HL7 FHIR Security](https://www.hl7.org/fhir/security.html)
-
-### Security Tools
-- [SAST Tools](https://owasp.org/www-community/Source_Code_Analysis_Tools)
-- [Container Security](https://github.com/aquasecurity/trivy)
-- [Dependency Scanning](https://docs.npmjs.com/auditing-package-dependencies-for-security-vulnerabilities)
+- [Trivy](https://github.com/aquasecurity/trivy) for container scanning
 
 ---
 
-**⚠️ Important**: This security guide covers Phase 1 implementation. Phase 2 will include OAuth2/SMART-on-FHIR authentication, advanced policy engines, and enhanced monitoring capabilities.
-
-For questions about security implementation or compliance requirements, please consult with your organization's security and compliance teams.
+**** Phase 2 — real OAuth2 / SMART-on-FHIR token verification and an advanced policy engine — is not started. `identity.ts` defines the seam it plugs into. Consult your organisation's security and compliance teams before deploying against real patient data, and give them the open-issues section above.

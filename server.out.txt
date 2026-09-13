@@ -1,1 +1,0 @@
-{"operation":"server.startup","success":true,"metadata":{"phiMode":"safe","auditEnabled":true,"securityFeaturesEnabled":{"inputValidation":true,"rateLimiting":true,"securityHeaders":true,"healthcareCompliant":true,"phiAuthorization":true},"timestamp":"2025-09-12T17:31:23.004Z","version":"0.1.0"},"timestamp":"2025-09-12T17:31:23.004Z","traceId":"iwc56y1nb7amfh46b5o"}

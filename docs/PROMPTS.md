@@ -2,6 +2,13 @@
 
 This guide provides ready-to-use prompts and patterns for working with FHIR-MCP tools effectively.
 
+> **Before you use these prompts, four behaviours will change what comes back.**
+>
+> 1. **Identity is required.** Without `MCP_SERVICE_PRINCIPAL_ID` configured, every IDENTIFIABLE read returns `HEALTHCARE_COMPLIANCE_VIOLATION` and no resource body. None of the patterns below will return data. See [QUICKSTART.md](QUICKSTART.md#identity-is-required-for-phi).
+> 2. **Identifiers come back as `PT_` tokens**, not values — and those tokens change on every server restart. A prompt that asks the model to remember or correlate an id across sessions will silently correlate the wrong things.
+> 3. **`birthDate` is removed, not partially masked.** There is no age to compute and no partial date to parse; ask for neither.
+> 4. **Free text is not masked on Condition, MedicationRequest, Procedure, CarePlan or DiagnosticReport.** Prompts that surface `note[]`, `code.text` or `description` from those types can surface a patient name straight into the model context. See [SECURITY.md](SECURITY.md#2-free-text-unmasked-on-several-clinical-resource-types).
+
 ## System Prompt
 
 Add this to your LLM system prompt:
@@ -28,7 +35,7 @@ You can access FHIR data and HL7 terminology through FhirMCP tools. Follow these
   "arguments": {
     "resourceType": "Patient",
     "id": "{{patient_id}}",
-    "elements": ["id", "gender", "age", "maritalStatus"]
+    "elements": ["id", "gender", "maritalStatus"]
   }
 }
 ```
@@ -193,7 +200,6 @@ You can access FHIR data and HL7 terminology through FhirMCP tools. Follow these
 ```
 **Patient Summary** (Safe Mode - PHI Protected)
 - Gender: {{gender}}
-- Age: {{calculated_age}} years  
 - Last Visit: {{encounter.period.start | date}}
 
 **Recent Vitals** ({{observation.effectiveDateTime | date}})
@@ -202,9 +208,11 @@ You can access FHIR data and HL7 terminology through FhirMCP tools. Follow these
 - Temperature: {{temp}}°F
 
 **Active Conditions**
-- {{condition.code.text}} (since {{condition.onsetDateTime | date}})
+- {{condition.code.text}}
 
-*Note: Personal identifiers masked for privacy*
+*Note: identifiers and ids replaced with per-process `PT_` pseudonym tokens; name masked; birthDate, telecom and address removed. Tokens are NOT stable across server restarts.*
+
+There is no age field: `birthDate` is removed, so nothing downstream can derive one. `condition.code.text` is not masked (open issue 2) and can contain a patient name — review it before rendering it into a summary.
 ```
 
 ### Code Explanation Template
@@ -257,46 +265,68 @@ No {{resourceType}} records found matching: {{search_criteria}}
 ## Best Practices
 
 ### Token Optimization
+
 - **Always specify elements**: `["id", "code", "effectiveDateTime", "valueQuantity"]`
 - **Use filters early**: Include `patient`, `date`, `category`, `status` in initial search
 - **Limit results**: Default `count: 5-10` for exploratory searches
 - **Sort strategically**: `-date` for latest, `-_lastUpdated` for most recent changes
 
 ### Error Handling
+
 - Check for empty search results and suggest alternatives
 - Handle network timeouts gracefully with retry suggestions  
 - Validate date formats before searches
 - Provide helpful error messages for schema validation failures
 
 ### PHI Protection
-- Never display full names, addresses, SSNs, or exact birth dates
-- Use age instead of birth date when possible
-- Reference patients by ID only in subsequent searches
-- Redact contact information in summaries
+
+In `safe` mode the server has already applied these before the model sees anything — these guidelines are about not undoing that.
+
+- Never display full names, addresses or contact details; in `safe` mode they arrive as `***` or absent already
+- **Do not ask for or compute an age.** `birthDate` is removed outright, so there is nothing to derive one from
+- Reference patients by the returned `PT_` token only. **Do not treat a token as a durable identifier** — it is per-process and changes on restart, so carrying one across sessions correlates the wrong patient
+- **Treat free text from Condition, MedicationRequest, Procedure, CarePlan and DiagnosticReport as unmasked.** `note[]`, `code.text`, `dosageInstruction[].text`, `report[].display`, `description` and `presentedForm[].title` are not covered by the masking rules (open issue 2), so a name or ID can arrive in them intact. Observation and Encounter are clean.
+- `DocumentReference` cannot be read or searched at all — it is missing from the validator's resource-type allowlist
 
 ### Audit Awareness
-- All tool calls are automatically logged
-- Operation metadata is captured (but PHI is redacted)
-- Failed operations generate audit events
+
+- All tool calls are logged, including **denied** reads
+- Metadata passes a structural allowlist, so unanticipated keys are dropped rather than logged
+- Failed operations generate audit events; the error **class** is recorded, never the message
 - Trace IDs link related operations together
+- Records go to stderr by default (stdout is the MCP protocol channel)
+- **Caveat:** the `resourceIdHash` field is an unsalted SHA-256 truncated to 16 hex and is reversible for real patient ids. Treat audit logs as PHI-bearing.
 
 ## Advanced Patterns
 
 ### Batch Patient Analysis
-```javascript
-// First get patient list
-const patients = await fhir.search("Patient", {_count: 10});
 
-// Then get latest vitals for each
-for (const patient of patients.entries) {
-  const vitals = await fhir.search("Observation", {
-    patient: `Patient/${patient.id}`,
-    category: "vital-signs",
-    sort: "-date", 
-    count: 1
-  });
+Ask the FHIR server for the join, in one search, and let masking tokenize the result as a unit:
+
+```javascript
+// One search. _revinclude makes the server attach each patient's Observations
+// to the same Bundle, so no client-side id is ever fed back into a query.
+const bundle = await fhir.search("Patient", {
+  _count: 10,
+  _revinclude: "Observation:patient"
+});
+
+// Within one Bundle the same patient carries the same PT_ token on
+// Patient.id and on Observation.subject.reference, so the join survives masking.
+const byPatient = new Map();
+for (const entry of bundle.entries) {
+  const r = entry.resource;
+  if (r.resourceType === "Patient") continue;
+  const token = r.subject?.reference;          // "Patient/PT_..."
+  if (!token) continue;
+  if (!byPatient.has(token)) byPatient.set(token, []);
+  byPatient.get(token).push(r);
 }
 ```
+
+Do **not** loop over a masked result and feed `patient.id` back into a second search. In `safe` mode that field is a `PT_` pseudonym token, not the server-side id, so `Patient/PT_...` does not resolve upstream. Chaining needs the real id, which masking exists to withhold.
+
+`_revinclude` support depends on your FHIR server; the MCP server passes search parameters through without inspecting them. If yours does not support it, run chained retrieval before masking on a trusted path instead.
 
 ### Longitudinal Data Analysis
 ```javascript

@@ -83,3 +83,9 @@ pids
 # Test outputs
 test-results/
 playwright-report/
+
+# Captured process output - startup banners and test runs, not source.
+# These were committed at the repo root; see CHANGELOG [Unreleased].
+*.err.txt
+*.out.txt
+_testout.txt
