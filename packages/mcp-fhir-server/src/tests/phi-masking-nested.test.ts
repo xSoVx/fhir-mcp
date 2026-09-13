@@ -94,11 +94,26 @@ describe('PHIMaskingEngine - Bundle.entry[] recursion (finding 5)', () => {
     expect(JSON.stringify(masked)).not.toContain(CANARY);
   });
 
-  test('preserves non-resource entry metadata such as fullUrl', () => {
+  test('keeps entry metadata, but pseudonymises the id inside fullUrl', () => {
+    // EXPECTATION CHANGED AT LANE I -- this used to assert the fullUrl survived
+    // VERBATIM, i.e. that 'http://example.org/Patient/p1' came through intact.
+    // It is not entry metadata in the harmless sense the old name claimed:
+    // `fullUrl` is an absolute URL ending in /Type/id, so it carries the same
+    // logical id the reference pass rewrites PLUS the origin server, and the
+    // two together are a complete recipe for re-reading the original resource.
+    // Checking in the old assertion would pin the leak open.
+    //
+    // The test's real point is preserved and made sharper: the entry is not
+    // dropped wholesale, the pointer still says WHAT it pointed at, and only
+    // the id and the origin are gone.
     const engine = new PHIMaskingEngine();
     const masked = engine.applyMasking(bundleWithPatientEntry(), []);
 
-    expect(masked.entry[0].fullUrl).toBe('http://example.org/Patient/p1');
+    const fullUrl = masked.entry[0].fullUrl;
+    expect(typeof fullUrl).toBe('string');
+    expect(fullUrl).toMatch(/^Patient\/PT_[A-Za-z0-9_-]{12}$/);
+    expect(fullUrl).not.toContain('p1');
+    expect(fullUrl).not.toContain('example.org');
   });
 
   test('reaches a Patient contained inside a Bundle entry (two levels down)', () => {
@@ -111,6 +126,15 @@ describe('PHIMaskingEngine - Bundle.entry[] recursion (finding 5)', () => {
   });
 
   test('leaves a non-Bundle `entry` array (e.g. List.entry) structurally intact', () => {
+    // The STRUCTURAL claim is unchanged and is what this test is about: a
+    // List.entry holds a Reference, not a resource, so maskNested() must not
+    // mistake it for a Bundle entry and must not reshape or drop it.
+    //
+    // EXPECTATION NARROWED AT LANE I: the reference VALUE is now pseudonymised.
+    // `List` has no `case` in the classifier switch and never had a `subject`
+    // rule, which is precisely the type-dependent gap the audit found -- a
+    // `Patient/p1` surviving raw here is the bug, not the baseline. Structure
+    // intact, id tokenised.
     const engine = new PHIMaskingEngine();
     const list = {
       resourceType: 'List',
@@ -119,7 +143,9 @@ describe('PHIMaskingEngine - Bundle.entry[] recursion (finding 5)', () => {
 
     const masked = engine.applyMasking(list, []);
     expect(masked.entry).toHaveLength(1);
-    expect(masked.entry[0].item.reference).toBe('Patient/p1');
+    expect(Object.keys(masked.entry[0])).toEqual(['item']);
+    expect(masked.entry[0].item.reference).toMatch(/^Patient\/PT_[A-Za-z0-9_-]{12}$/);
+    expect(masked.entry[0].item.reference).not.toContain('p1');
   });
 });
 

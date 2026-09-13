@@ -61,8 +61,30 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const GOLDEN_DIR = join(HERE, 'golden');
 const UPDATE = process.env.GOLDEN_UPDATE === '1';
 
-/** Matches the current unsalted-sha256 form and the planned HMAC token form. */
-const HASH_SHAPES = [/^[0-9a-f]{16}$/, /^PT_[A-Za-z0-9_-]{12}$/];
+/**
+ * Matches the current unsalted-sha256 form and the planned HMAC token form.
+ *
+ * EXTENDED AT LANE I with the two QUALIFIED token forms. References are now
+ * rewritten in place rather than collapsed to a bare hash, so a masked
+ * `subject` reads `Patient/PT_xxxxxxxxxxxx` and a fragment reads
+ * `#PT_xxxxxxxxxxxx`. Both embed a token derived under a per-session random
+ * key, so without these shapes every expected.json containing a reference would
+ * differ on every run.
+ *
+ * KNOWN LIMIT, recorded because it matters for what this corpus can prove: the
+ * placeholder erases token IDENTITY. `Patient/PT_aaa` and `Patient/PT_bbb`
+ * both render as "<<HASH>>", so a golden file CANNOT catch one patient being
+ * given two different tokens -- which is the central risk of unified
+ * derivation, and is how the non-idempotence bug survived a clean-looking
+ * golden diff. Token equality is asserted in phi-reidentification.test.ts
+ * instead, and belongs there rather than here.
+ */
+const HASH_SHAPES = [
+  /^[0-9a-f]{16}$/,
+  /^PT_[A-Za-z0-9_-]{12}$/,
+  /^[A-Z][A-Za-z]+\/PT_[A-Za-z0-9_-]{12}$/,
+  /^#PT_[A-Za-z0-9_-]{12}$/
+];
 
 interface GoldenCase {
   description: string;

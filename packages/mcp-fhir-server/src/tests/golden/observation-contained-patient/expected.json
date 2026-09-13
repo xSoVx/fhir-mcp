@@ -1,7 +1,7 @@
 {
   "masked": {
     "resourceType": "Observation",
-    "id": "golden-contained",
+    "id": "<<HASH>>",
     "status": "final",
     "code": {
       "coding": [
@@ -12,11 +12,13 @@
         }
       ]
     },
-    "subject": "<<HASH>>",
+    "subject": {
+      "reference": "<<HASH>>"
+    },
     "contained": [
       {
         "resourceType": "Patient",
-        "id": "p1",
+        "id": "<<HASH>>",
         "identifier": "<<HASH>>",
         "name": "***"
       }

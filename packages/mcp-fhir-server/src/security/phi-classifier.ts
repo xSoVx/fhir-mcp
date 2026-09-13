@@ -9,6 +9,7 @@ import {
   GLOBAL_NARRATIVE_MASKING_RULES,
   GLOBAL_ATTACHMENT_MASKING_RULES,
   GLOBAL_META_MASKING_RULES,
+  GLOBAL_REFERENCE_MASKING_RULES,
   NarrativePolicy,
   PHIClassifierOptions
 } from '../types/phi-types.js';
@@ -309,7 +310,16 @@ export class PHIClassifier {
       ...GLOBAL_IDENTIFIER_MASKING_RULES,
       ...this.getNarrativeMaskingRules(resource),
       ...GLOBAL_ATTACHMENT_MASKING_RULES,
-      ...GLOBAL_META_MASKING_RULES
+      ...GLOBAL_META_MASKING_RULES,
+      // Person-valued References. Hoisted out of the per-type `switch` below
+      // because the audit found the `subject` rule present for Observation,
+      // Encounter, DiagnosticReport and DocumentReference and ABSENT for
+      // Condition, Procedure and MedicationRequest -- which emitted
+      // `Patient/<id>` raw. The per-type `subject` entries are left in place:
+      // PHIMaskingEngine's reference rewriting is idempotent, so applying the
+      // rule twice yields the same token, and the duplicate documents the
+      // intent at the site a reader looks for it.
+      ...GLOBAL_REFERENCE_MASKING_RULES
     ];
   }
 

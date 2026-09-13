@@ -1,7 +1,7 @@
 {
   "masked": {
     "resourceType": "Bundle",
-    "id": "golden-bundle"
+    "id": "<<HASH>>"
   },
   "canaryLeaks": {
     "plaintext": false,

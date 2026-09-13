@@ -167,7 +167,13 @@ describe('PHIMaskingEngine - the session key never escapes (finding 4)', () => {
     engine.applyMasking(patientWithCanary(), HASH_IDENTIFIER);
 
     const stats = engine.getStats();
-    expect(stats.cacheSize).toBe(1);
+    // TWO entries, not one, since lane I: the `identifier` hash this test's
+    // HASH_IDENTIFIER rule asks for, plus the logical-id token that
+    // pseudonymiseLogicalIds() now derives for `Patient.id`. Pinned exactly
+    // rather than loosened to >= 1 -- the number is the non-vacuity proof that
+    // the cache was populated at all, and a `toBeGreaterThan(0)` here would
+    // keep passing if one of the two derivations silently stopped running.
+    expect(stats.cacheSize).toBe(2);
     expect(Object.values(stats).every(v => typeof v === 'number')).toBe(true);
     expect(JSON.stringify(stats)).not.toContain(CANARY);
   });
