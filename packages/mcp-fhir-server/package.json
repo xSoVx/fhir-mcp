@@ -18,6 +18,7 @@
     "test:gate": "node ./scripts/check-test-baseline.mjs",
     "golden:update": "node ./scripts/update-golden.mjs",
     "test:http": "node src/test-http-integration.js",
+    "test:e2e": "node ./scripts/lane-h-e2e.mjs",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc --noEmit -p tsconfig.test.json"

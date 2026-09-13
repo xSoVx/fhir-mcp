@@ -13,6 +13,15 @@ import { SecurityMiddleware } from './security/security-middleware.js';
 import { FhirTools } from './tools/fhir-tools.js';
 import { TerminologyTools } from './tools/terminology-tools.js';
 import { FhirMcpConfig } from './types/config.js';
+import {
+  IdentityProvider,
+  StaticIdentityProvider,
+  ServicePrincipal,
+  servicePrincipalFromEnv,
+  describePrincipal,
+  PRINCIPAL_ID_ENV,
+  PRINCIPAL_SCOPES_ENV
+} from './security/identity.js';
 
 class FhirMcpServer {
   private server: Server;
@@ -24,6 +33,8 @@ class FhirMcpServer {
   private securityMiddleware: SecurityMiddleware;
   private fhirTools: FhirTools;
   private terminologyTools: TerminologyTools;
+  private servicePrincipal?: ServicePrincipal;
+  private identityProvider: IdentityProvider;
 
   constructor() {
     // Load configuration (in production, this would come from config files or environment)
@@ -76,12 +87,29 @@ class FhirMcpServer {
       }
     }, this.auditLogger);
 
+    // ------------------------------------------------------------------
+    // Caller identity.
+    //
+    // stdio has no per-request authentication channel: the host process
+    // launches this server and every tool call arrives over the same pipe.
+    // The only honest identity here is therefore the one the OPERATOR
+    // declares - a configured service identity with explicit scopes.
+    //
+    // Throws on a malformed declaration (same posture as parsePhiGuardMode
+    // above) and returns undefined when nothing is declared, which
+    // reproduces the previous behaviour exactly: no identity, and every
+    // IDENTIFIABLE or RESTRICTED resource denied.
+    // ------------------------------------------------------------------
+    this.servicePrincipal = servicePrincipalFromEnv();
+    this.identityProvider = new StaticIdentityProvider(this.servicePrincipal);
+
     // Initialize tool handlers with enhanced security
     this.fhirTools = new FhirTools(
       this.fhirProvider, 
       this.phiGuard, 
       this.auditLogger,
-      this.securityMiddleware
+      this.securityMiddleware,
+      this.identityProvider
     );
     this.terminologyTools = new TerminologyTools(this.terminologyProvider, this.auditLogger);
 
@@ -176,6 +204,14 @@ class FhirMcpServer {
     console.error(`   • Healthcare Compliance: ENABLED`);
     console.error(`   • PHI Authorization: ENABLED`);
     console.error(`   • Compliance Level: ${securityStats.securityHeaders.complianceLevel.toUpperCase()}`);
+    console.error(`   • Caller Identity: ${describePrincipal(this.servicePrincipal)}`);
+    if (!this.servicePrincipal) {
+      console.error(
+        `     ↳ no ${PRINCIPAL_ID_ENV} configured; PHI-bearing resources will be ` +
+        `denied before masking runs. Set ${PRINCIPAL_ID_ENV} and ` +
+        `${PRINCIPAL_SCOPES_ENV} to enable masked PHI access.`
+      );
+    }
     
     // Log initial security audit
     await this.auditLogger.log({
@@ -184,6 +220,9 @@ class FhirMcpServer {
       metadata: {
         phiMode: this.config.security.phiMode,
         auditEnabled: this.config.security.enableAudit,
+        principalId: this.servicePrincipal?.id,
+        principalScopes: this.servicePrincipal?.scopes,
+        principalPermissions: this.servicePrincipal?.permissions,
         securityFeaturesEnabled: {
           inputValidation: true,
           rateLimiting: true,

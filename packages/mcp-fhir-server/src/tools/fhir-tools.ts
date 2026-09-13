@@ -3,23 +3,46 @@ import { FhirProvider } from '../providers/fhir-provider.js';
 import { PhiGuard } from '../security/phi-guard.js';
 import { AuditLogger } from '../security/audit-logger.js';
 import { SecurityMiddleware, SecurityContext } from '../security/security-middleware.js';
-import { PHILevel, RESOURCE_PHI_MATRIX } from '../types/phi-types.js';
+import { PHILevel, RESOURCE_PHI_MATRIX, User } from '../types/phi-types.js';
+import { IdentityProvider, ANONYMOUS_IDENTITY_PROVIDER } from '../security/identity.js';
 import { 
   FhirCapabilitiesSchema
 } from './schemas.js';
 
 export class FhirTools {
   private securityMiddleware: SecurityMiddleware;
+  private identityProvider: IdentityProvider;
 
   constructor(
     private fhirProvider: FhirProvider,
     private phiGuard: PhiGuard,
     private auditLogger: AuditLogger,
-    securityMiddleware?: SecurityMiddleware
+    securityMiddleware?: SecurityMiddleware,
+    identityProvider?: IdentityProvider
   ) {
     this.securityMiddleware = securityMiddleware || new SecurityMiddleware({
       healthcareCompliant: true
     }, this.auditLogger);
+
+    // Defaults to ANONYMOUS_IDENTITY_PROVIDER, not to a built-in principal:
+    // omitting the argument must deny, never grant. The transport
+    // (index.ts / http.ts) is the only thing allowed to supply an identity.
+    this.identityProvider = identityProvider || ANONYMOUS_IDENTITY_PROVIDER;
+  }
+
+  /**
+   * Resolve the caller identity for the request being handled.
+   *
+   * An `undefined` return is legitimate and expected: it means
+   * "unauthenticated". It is passed downstream unchanged so that
+   * SecurityMiddleware's HIPAA compliance check (which requires
+   * `context.userId` for IDENTIFIABLE and RESTRICTED resources) and
+   * PHIAuthorizationEngine.hasPatientLevelAccess() both deny exactly as they
+   * did before user context existed. Nothing in this class invents, defaults
+   * or widens an identity.
+   */
+  private currentUser(): User | undefined {
+    return this.identityProvider.resolvePrincipal();
   }
 
   getCapabilitiesTool(): Tool {
@@ -190,8 +213,11 @@ export class FhirTools {
   }
 
   async handleSearch(args: any): Promise<any> {
+    const user = this.currentUser();
+
     // Create security context
     const securityContext: SecurityContext = {
+      userId: user?.id,
       sessionId: 'search-' + Date.now(),
       operation: 'fhir.search',
       resourceType: args.resourceType,
@@ -238,7 +264,7 @@ export class FhirTools {
             try {
               const authResult = await this.phiGuard.authorizeAndMaskResource(
                 entry.resource,
-                undefined, // No user context in current implementation
+                user, // Resolved caller identity; undefined when unauthenticated (denied downstream)
                 'read',
                 `search_${Date.now()}`
               );
@@ -300,7 +326,10 @@ export class FhirTools {
   }
 
   async handleRead(args: any): Promise<any> {
+    const user = this.currentUser();
+
     const securityContext: SecurityContext = {
+      userId: user?.id,
       sessionId: 'read-' + Date.now(),
       operation: 'fhir.read',
       resourceType: args.resourceType,
@@ -327,7 +356,7 @@ export class FhirTools {
       // Apply PHI protection with enhanced authorization engine
       const authResult = await this.phiGuard.authorizeAndMaskResource(
         resource,
-        undefined, // No user context in current implementation
+        user, // Resolved caller identity; undefined when unauthenticated (denied downstream)
         'read',
         securityContext.sessionId
       );
@@ -358,7 +387,10 @@ export class FhirTools {
   }
 
   async handleCreate(args: any): Promise<any> {
+    const user = this.currentUser();
+
     const securityContext: SecurityContext = {
+      userId: user?.id,
       sessionId: 'create-' + Date.now(),
       operation: 'fhir.create',
       resourceType: args.resourceType,
@@ -406,7 +438,10 @@ export class FhirTools {
   }
 
   async handleUpdate(args: any): Promise<any> {
+    const user = this.currentUser();
+
     const securityContext: SecurityContext = {
+      userId: user?.id,
       sessionId: 'update-' + Date.now(),
       operation: 'fhir.update',
       resourceType: args.resourceType,
