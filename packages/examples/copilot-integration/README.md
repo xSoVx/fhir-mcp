@@ -2,7 +2,7 @@
 
 This example shows how to integrate GitHub Copilot with FhirMCP for AI-assisted healthcare development.
 
-## 🚀 Setup
+## Setup
 
 1. **Start the HTTP Bridge**:
    ```bash
@@ -30,9 +30,10 @@ This example shows how to integrate GitHub Copilot with FhirMCP for AI-assisted 
    }
    ```
 
-## 💡 How It Works
+## How It Works
 
 The `copilot-fhir.js` file provides Copilot-friendly functions with:
+
 - Clear JSDoc documentation
 - Common parameter patterns  
 - Example usage in comments
@@ -40,7 +41,7 @@ The `copilot-fhir.js` file provides Copilot-friendly functions with:
 
 When you start typing healthcare-related code, Copilot will suggest these functions.
 
-## 📝 Usage Examples
+## Usage Examples
 
 ### Patient Search
 ```javascript
@@ -74,7 +75,7 @@ const bp = await searchObservations("123", {
 });
 ```
 
-## 🎯 Copilot Training Tips
+## Copilot Training Tips
 
 1. **Add Context Comments**:
    ```javascript
@@ -98,7 +99,7 @@ const bp = await searchObservations("123", {
    });
    ```
 
-## 🔧 Advanced Integration
+## Advanced Integration
 
 ### Custom Copilot Completions
 
@@ -154,7 +155,7 @@ Add to `.vscode/fhir.code-snippets`:
 }
 ```
 
-## 🔍 Debugging
+## Debugging
 
 If Copilot isn't suggesting FHIR functions:
 
@@ -163,19 +164,21 @@ If Copilot isn't suggesting FHIR functions:
 3. **Use Consistent Naming**: Stick to medical terminology
 4. **Include Examples**: Add more example usage in comments
 
-## 🛡️ Security Notes
+## Security Notes
 
-- All data is automatically PHI-masked by FhirMCP
-- Use `PHI_MODE=safe` for production
-- HTTP bridge should use HTTPS in production
-- Consider rate limiting for production deployments
+- **Set a caller principal on the bridge.** Without `MCP_SERVICE_PRINCIPAL_ID` and `MCP_SERVICE_PRINCIPAL_SCOPES`, every IDENTIFIABLE read is denied and returns no resource body.
+- **Use `PHI_MODE=safe`.** `trusted` returns resources unmasked.
+- Masking is not total. `name` becomes `***`, `birthDate` is removed, and `identifier`/`id` become per-process `PT_` tokens — but free text on Condition, MedicationRequest, Procedure, CarePlan and DiagnosticReport is **not** masked and can carry a patient name. See [SECURITY.md](../../../docs/SECURITY.md#known-open-security-issues).
+- `PT_` tokens change on every server restart. Do not store them as patient keys.
+- The HTTP bridge speaks plain HTTP and, with `AUTH_TOKEN` unset, accepts unauthenticated requests. Terminate TLS in front of it and restrict access to the port.
 
-## 📊 Monitoring Usage
+## Monitoring Usage
 
 The HTTP bridge logs all requests. Monitor for:
+
 - Response times
 - Error rates  
 - Usage patterns
 - Security events
 
-This integration makes healthcare development with Copilot much more intuitive and productive!
+The bridge must be running for any of these to work; see the setup section above.

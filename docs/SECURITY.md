@@ -2,9 +2,9 @@
 
 Security guidance for deploying FHIR-MCP, covering what the PHI protection layer actually does on the `integration/phase2` branch, what it does not do, and what is still open.
 
-> **Read this first.** This guide previously described a security posture the code did not have. Every claim below has been checked against the source on this branch; claims that could not be verified are marked as such. There are **four known open security issues**, one of which is a live PHI exposure in audit logs. Do not treat this document as a compliance attestation.
+> **Read this first.** Every claim below has been checked against the source on this branch; claims that could not be verified are marked as such. There are **four known open security issues**, one of which is a live PHI exposure in audit logs. Do not treat this document as a compliance attestation.
 
-## 🛡️ Threat model and scope
+## Threat model and scope
 
 FHIR-MCP sits between an LLM client and a FHIR server. Its job is to ensure that what reaches the model is de-identified according to policy, and that every access attempt is recorded. It is not an authorization server, not a FHIR façade with its own access policy engine, and not a substitute for controls on the upstream FHIR server.
 
@@ -23,7 +23,7 @@ FHIR-MCP sits between an LLM client and a FHIR server. Its job is to ensure that
 └──────────────────────────────────────────────────────────────┘
 ```
 
-## 🔑 Caller identity — mandatory for PHI
+## Caller identity — mandatory for PHI
 
 This is the change most likely to break an existing deployment.
 
@@ -93,7 +93,7 @@ Two consequences worth stating plainly:
 
 Terminate TLS in front of this and restrict network access to the port. The token travels in a header.
 
-## 🔒 PHI masking
+## PHI masking
 
 Masking runs only after authorization allows the read. The rule set is assembled from three sources, deliberately independent of each other so that adding a resource type cannot silently omit the global layer.
 
@@ -112,7 +112,7 @@ Masking runs only after authorization allows the read. The rule set is assembled
 
 `name` → `***`; `identifier` → token; `birthDate`, `address`, `telecom`, `contact`, `communication` → removed.
 
-Note: the Patient per-type rule says `birthDate: partial` ("year only") but the IDENTIFIABLE default says `remove`, and **removal is what happens** — `phi-authz-canary.test.ts:113` asserts `masked.birthDate` is `undefined` and passes. Earlier documentation claiming `birthDate → "YYYY-**-**"` was wrong.
+`birthDate` is **removed**, not partially masked. Note the rule-set inconsistency behind that: the Patient per-type rule in `phi-classifier.ts` says `birthDate: partial` ("year only"), but the IDENTIFIABLE default says `remove` and is applied first, so `partial` then sees an absent value. `phi-authz-canary.test.ts:113` asserts `masked.birthDate` is `undefined` and passes. The `partial` rule is dead code and should be deleted so the two tables stop disagreeing.
 
 ### Structural handling
 
@@ -133,9 +133,9 @@ Note: the Patient per-type rule says `birthDate: partial` ("year only") but the 
 
 `rotateSessionKey()` drops every derived pseudonym. There is currently no supported way to supply a stable key from configuration; adding one would trade unlinkability for linkage and should be a deliberate, documented decision.
 
-## 🚦 Rate limiting
+## Rate limiting
 
-Six buckets, all with a **one-minute** window. Earlier documentation said 15 minutes; that was wrong.
+Six buckets, all with a **one-minute** window.
 
 | Bucket | Limit | Key |
 |---|---|---|
@@ -148,9 +148,9 @@ Six buckets, all with a **one-minute** window. Earlier documentation said 15 min
 
 **Caveat.** Two of the eight known test failures are `Security Integration Tests › Rate Limiting`, where the suite observes zero blocked requests where it expects some, plus a third downstream middleware failure. The limiter's behaviour under test does not match its stated intent. Verify against your own traffic before relying on these numbers, and do not treat rate limiting as a control you have evidence for.
 
-Thresholds are **compiled in**. `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX_REQUESTS`, `FHIR_RATE_LIMIT_MAX` and `WRITE_RATE_LIMIT_MAX` appeared in earlier versions of this guide and are read by nothing.
+Thresholds are **compiled in** and cannot be changed by configuration.
 
-## ✅ Input validation
+## Input validation
 
 Joi-based, in `src/security/input-validator.ts`.
 
@@ -158,7 +158,7 @@ Joi-based, in `src/security/input-validator.ts`.
 - `id` must match `/^[A-Za-z0-9\-_.]+$/`, 1–64 characters.
 - Rejected values are **not interpolated into error messages**, because those messages are returned to the caller *and* handed to the audit logger. Validation failures name the field, not the value. A rejected search-parameter name carries no field at all, since it is arbitrary caller-controlled text.
 
-## 📝 Audit logging
+## Audit logging
 
 Structured JSON, written with `console.error` to **stderr** by default. stdout is the MCP protocol channel — an audit trail written there lands wherever the client pipes the protocol rather than in a log the covered entity controls. `AUDIT_SINK=stdout` restores the old behaviour for deployments already scraping stdout.
 
@@ -175,21 +175,20 @@ Structured JSON, written with `console.error` to **stderr** by default. stdout i
 
 ### What audit logging is not
 
-- **No FHIR `AuditEvent` resources are emitted.** The records are this project's own JSON shape. Earlier documentation claimed standards-compliant `AuditEvent` emission; there is no such code.
+- **No FHIR `AuditEvent` resources are emitted.** The records are this project's own JSON shape.
 - **Logs are not tamper-proof and there is no cryptographic validation of them.** They are console output. Integrity, retention and write-once storage are the responsibility of whatever collects stderr.
-- **There is no built-in real-time alerting.** Log analysis examples below assume you have shipped the stream somewhere.
-- The `/var/log/fhir-mcp/*.log` paths in earlier versions of this guide were illustrative and are not created by the server.
+- **There is no built-in real-time alerting**, and the server creates no log files of its own. It writes to stderr; collecting, shipping and retaining that stream is the deployer's job.
 
-## 🤖 No machine learning is involved
+## How classification works
 
-Earlier versions of this guide described "ML-powered" PHI classification and "behavioural analysis" for anomaly detection. Neither exists. Classification is:
+Classification is two static mechanisms and nothing else:
 
 1. a static resource-type matrix (`RESOURCE_PHI_MATRIX` in `src/types/phi-types.ts`), and
 2. regular-expression field-name patterns (`SENSITIVE_FIELD_PATTERNS`: `/name/i`, `/identifier/i`, `/birth/i`, `/address/i`, `/phone/i`, `/email/i`, `/ssn/i`, `/social/i`, `/contact/i`, `/telecom/i`, `/photo/i`, `/image/i`).
 
 This matters for your risk assessment: the system recognises what it was told to recognise. A PHI-bearing field with an unanticipated name is not detected by pattern matching, which is precisely why the structural and allowlist-based defences above carry the real weight.
 
-## 🚨 Known open security issues
+## Known open security issues
 
 ### 1. `resourceIdHash` is reversible — live PHI exposure
 
@@ -264,7 +263,7 @@ No lane owned the decision and it was deliberately not taken during the merge ra
 
 **Unverified:** nothing in the repository records whether this is an intentional restriction or an oversight. It is documented as a limitation, not a decision. If it is later added to the allowlist, its masking rules and the tests around them already exist.
 
-## 🔧 Production deployment
+## Production deployment
 
 ### Environment
 
@@ -298,7 +297,7 @@ export AUTH_TOKEN="<long random secret>"
 
 `npm run start:http` uses POSIX `VAR=x command` prefix syntax and **fails on PowerShell**. Set the variables first and run `node dist/http.js` directly.
 
-Read only by the `packages/examples/http-bridge` example: `ALLOWED_ORIGINS`, `REQUIRE_HTTPS`, `SECURITY_LOGGING`. Read by nothing anywhere: `CORS_CREDENTIALS`, `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX_REQUESTS`, `FHIR_RATE_LIMIT_MAX`, `WRITE_RATE_LIMIT_MAX`.
+`ALLOWED_ORIGINS`, `REQUIRE_HTTPS` and `SECURITY_LOGGING` are read by the `packages/examples/http-bridge` example only. Setting them has no effect on the MCP server.
 
 ### Build before deploying
 
@@ -345,7 +344,7 @@ services:
         limits: { cpus: '1.0', memory: 512M }
 ```
 
-## 🏥 HIPAA considerations
+## HIPAA considerations
 
 This section lists what the software contributes toward a Security Rule assessment. **It is not an attestation, and several safeguards are the deployer's responsibility, not the software's.**
 
@@ -359,7 +358,7 @@ This section lists what the software contributes toward a Security Rule assessme
 | §164.310 Physical | Non-root container, resource limits | Host and datacentre controls |
 | De-identification (§164.514) | Rule-driven masking + pseudonymisation | **Neither Safe Harbor nor Expert Determination is claimed.** Open issue 2 means free text on several clinical types is returned intact, which alone defeats Safe Harbor. |
 
-## 📊 Security testing
+## Security testing
 
 ```bash
 cd packages/mcp-fhir-server
@@ -369,13 +368,11 @@ npm run test:e2e      # scripts/lane-h-e2e.mjs
 npm audit --audit-level high
 ```
 
-There is **no** `npm run test:security` script; earlier versions of this guide referenced one.
-
 The PHI-specific suites are the useful security artifact. `phi-canary.test.ts` plants a single canary value in every element a FHIR resource can hide an identifier in and **asserts the leaky path actually ran before asserting the leak is gone** — a non-vacuous test, which is the property the original QA pass lacked. `phi-authz-invariant.test.ts` pins the structural rule that any `allowed: true` at IDENTIFIABLE or above carries a non-empty rule set.
 
-Not performed on this branch: penetration testing, container image scanning, formal dependency review. Treat the penetration-testing and compliance checklists that used to appear here as work items, not as completed items.
+Not performed on this branch: penetration testing, container image scanning, formal dependency review. These are work items, not completed items.
 
-## 🚨 If you suspect a breach
+## If you suspect a breach
 
 1. **Contain** — revoke `AUTH_TOKEN`, restrict network access to the port, preserve the audit stream before rotation.
 2. **Assess scope with issue 1 in mind** — `resourceIdHash` values in your existing logs are recoverable by anyone who obtains them. Treat historical audit logs as PHI-bearing until the hash is keyed.
@@ -383,7 +380,7 @@ Not performed on this branch: penetration testing, container image scanning, for
 4. **Check log integrity** — `resourceType` is attacker-controllable in denial records (issue 3), so audit records may contain forged content.
 5. **Verify the deployed build** — confirm `dist/` was rebuilt from the branch you think is running. A stale `dist/` is an easy way to have been running unremediated code.
 
-## 📚 References
+## References
 
 - [HIPAA Security Rule](https://www.hhs.gov/hipaa/for-professionals/security/index.html)
 - [NIST Cybersecurity Framework](https://www.nist.gov/cyberframework)
@@ -394,4 +391,4 @@ Not performed on this branch: penetration testing, container image scanning, for
 
 ---
 
-**⚠️** Phase 2 — real OAuth2 / SMART-on-FHIR token verification and an advanced policy engine — is not started. `identity.ts` defines the seam it plugs into. Consult your organisation's security and compliance teams before deploying against real patient data, and give them the open-issues section above.
+**** Phase 2 — real OAuth2 / SMART-on-FHIR token verification and an advanced policy engine — is not started. `identity.ts` defines the seam it plugs into. Consult your organisation's security and compliance teams before deploying against real patient data, and give them the open-issues section above.

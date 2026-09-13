@@ -6,21 +6,21 @@
 
 FHIR-MCP is an open-source MCP (Model Context Protocol) server that lets LLMs interact with FHIR servers and HL7 terminology services behind a PHI de-identification layer. It provides FHIR read/search/create/update, terminology operations, PHI classification and masking, and audit logging.
 
-> **Status: pre-production.** This branch (`integration/phase2`) carries nine lanes of PHI remediation (A–I) that closed a set of leaks found by a live audit against a real FHIR server. Several of those leaks were open in every release before this branch. There remain **four known open security issues** — see [Known open issues](#-known-open-issues) — one of which (reversible audit id hashing) is a live PHI exposure. Read that section before deploying against real patient data.
+> **Status: pre-production.** This branch (`integration/phase2`) carries nine lanes of PHI remediation (A–I) that closed a set of leaks found by a live audit against a real FHIR server. Several of those leaks were open in every release before this branch. There remain **four known open security issues** — see [Known open issues](#known-open-issues) — one of which (reversible audit id hashing) is a live PHI exposure. Read that section before deploying against real patient data.
 
-## ✨ Features
+## Features
 
-- 🛡️ **PHI protection**: rule-driven classification and masking, pseudonym tokens, fail-closed authorization
-- 📊 **FHIR operations**: read, search, create, update
-- 🏥 **HL7 terminology**: ValueSet expansion, CodeSystem lookup, concept translation
-- 📝 **Audit logging**: structured JSON records with trace IDs, emitted on stderr by default
-- 🔐 **Security hardening**: OWASP security headers, multi-tier rate limiting, Joi input validation
-- ⚡ **Token efficient**: field selection (`elements`), pagination
-- 🔧 **Interoperable**: works with HAPI FHIR, Firely and other R4/R4B servers
-- 🌐 **HTTP bridge**: REST API example with Docker packaging
-- 🔒 **Modern architecture**: ES modules, TypeScript
+- **PHI protection**: rule-driven classification and masking, pseudonym tokens, fail-closed authorization
+- **FHIR operations**: read, search, create, update
+- **HL7 terminology**: ValueSet expansion, CodeSystem lookup, concept translation
+- **Audit logging**: structured JSON records with trace IDs, emitted on stderr by default
+- **Security hardening**: OWASP security headers, multi-tier rate limiting, Joi input validation
+- **Token efficient**: field selection (`elements`), pagination
+- **Interoperable**: works with HAPI FHIR, Firely and other R4/R4B servers
+- **HTTP bridge**: REST API example with Docker packaging
+- **Modern architecture**: ES modules, TypeScript
 
-## ⚠️ Breaking change on this branch: identity is required for PHI
+## Breaking change on this branch: identity is required for PHI
 
 Before lane H, the tool layer built its `SecurityContext` without a `userId`. The measured effect against a live FHIR server was that **every IDENTIFIABLE resource was suppressed before masking**, so the masking engine never ran in production at all.
 
@@ -42,9 +42,9 @@ export MCP_SERVICE_PRINCIPAL_ID="svc-analytics"
 export MCP_SERVICE_PRINCIPAL_SCOPES="system/*.read"
 ```
 
-See [Authentication & authorization](#-authentication--authorization) for the full scope table and the transport-specific rules.
+See [Authentication & authorization](#authentication--authorization) for the full scope table and the transport-specific rules.
 
-## 🚀 Quick Start
+## Quick Start
 
 1. **Install dependencies** (from the repository root — this is an npm workspace):
 
@@ -52,7 +52,7 @@ See [Authentication & authorization](#-authentication--authorization) for the fu
    npm install
    ```
 
-2. **Build.** `dist/` is gitignored but load-bearing at runtime — see [The build trap](#-the-build-trap). This step is not optional.
+2. **Build.** `dist/` is gitignored but load-bearing at runtime — see [The build trap](#the-build-trap). This step is not optional.
 
    ```bash
    npm run build
@@ -91,7 +91,7 @@ See [Authentication & authorization](#-authentication--authorization) for the fu
    node test-basic-functionality.js
    ```
 
-## ⚙️ The build trap
+## The build trap
 
 `dist/` is in `.gitignore` (line 8), and it is what actually runs:
 
@@ -106,7 +106,7 @@ See [Authentication & authorization](#-authentication--authorization) for the fu
 
 Jest, meanwhile, runs against `src/` via ts-jest. **A green test suite therefore says nothing about the deployed path.** `npm run build` is mandatory before deploying, before testing runtime behaviour, and after every pull that touches `src/`. A stale `dist/` will happily serve the pre-remediation masking code while the tests pass.
 
-## 🪟 Windows note: `npm run start:http` is broken on PowerShell
+## Windows note: `npm run start:http` is broken on PowerShell
 
 `packages/mcp-fhir-server/package.json` defines:
 
@@ -124,7 +124,7 @@ node dist/http.js
 
 or `cmd /c "set MCP_TRANSPORT=http && set PORT=8080 && node dist/http.js"`.
 
-## 🛠️ Available Tools
+## Available Tools
 
 ### FHIR Operations
 
@@ -140,7 +140,7 @@ or `cmd /c "set MCP_TRANSPORT=http && set PORT=8080 && node dist/http.js"`.
 - `terminology.expand` — expand ValueSets
 - `terminology.translate` — translate codes between systems
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 packages/
@@ -162,13 +162,13 @@ docs/
 ├── QUICKSTART.md
 ├── PROMPTS.md
 ├── SECURITY.md
-└── AI_INTEGRATION.md
+├── AI_INTEGRATION.md
+└── QA-REPORT.md            # test status against test-baseline.json
 
 tests/e2e/                   # standalone e2e script
-QA-REPORT.md                 # test status (root, not tests/)
 ```
 
-## 🔒 PHI protection
+## PHI protection
 
 ### What masking covers
 
@@ -207,9 +207,9 @@ Consequences:
 
 `rotateSessionKey()` exists and drops every derived pseudonym when called. There is currently no supported way to supply a stable key from configuration.
 
-## 🔐 Authentication & Authorization
+## Authentication & Authorization
 
-This section describes what is wired on this branch. It is deliberately narrower than earlier revisions of this README, which described an OAuth2/SMART authorization server that does not exist in this repository.
+This section describes what is wired on this branch. There is no OAuth2 or SMART authorization server in this repository; see [What does not exist](#what-does-not-exist) below for the full list.
 
 ### What exists
 
@@ -249,7 +249,7 @@ Parsing is strict: an unrecognised scope, a malformed id, or an id declared with
 
 Real token-issuer integration remains Phase 2 work. `identity.ts` defines the seam it plugs into: anything that can verify a caller produces a `User` and hands it to an `IdentityProvider`.
 
-## 📝 Audit logging
+## Audit logging
 
 Records are structured JSON on stderr (stdout is the MCP protocol channel; `AUDIT_SINK=stdout` restores the old behaviour for deployments already scraping it).
 
@@ -261,7 +261,7 @@ Changes on this branch:
 - `resourceId` is replaced by `resourceIdHash`. **See open issue 1: this hash is reversible.**
 - **Denied reads now produce an audit record.** They previously produced none: `fhir-tools` returned as soon as `allowed` was false and never reached `logFhirOperation`, so the single most reviewable event this control produces left no trace.
 
-## 🚨 Known open issues
+## Known open issues
 
 These are open on this branch. They are listed here rather than in an issue tracker because overclaiming is the specific failure mode that produced most of the defects lanes A–I were created to fix.
 
@@ -308,7 +308,7 @@ No lane owned this decision and it was deliberately not made during the merge. T
 
 `DocumentReference` is `IDENTIFIABLE` in `RESOURCE_PHI_MATRIX` (`phi-types.ts:105`) and carries per-type masking rules, but it is **absent from `InputValidator.isValidResourceType`'s allowlist** (`input-validator.ts:423-430`). Reads and searches for it are rejected at validation, so its masking rules are unreachable through the tool surface. Whether this is an intentional restriction or an oversight is not recorded anywhere in the repository; it is documented here as a limitation, not a decision.
 
-## 🧪 Testing
+## Testing
 
 ```bash
 npm run build          # required before any runtime testing — see the build trap
@@ -327,8 +327,6 @@ The 8 failures are enumerated with per-entry reasoning in `packages/mcp-fhir-ser
 
 `test:gate` enforces the baseline in **both** directions — an unlisted failure fails CI as a regression, and a listed test that starts passing also fails CI so the entry gets pruned. That is what stops the file from rotting into a blanket suppression.
 
-Historical note: earlier revisions of this README and of `QA-REPORT.md` claimed "19/19 tests passed (100% success rate)". That figure was not obtainable. The jest suite **could not execute at all** under ESM until lane A repaired the runner (`edbceca T0.1: repair jest under ESM so the test suite actually executes`). See `QA-REPORT.md` for the correction.
-
 Additional standalone scripts (not part of the jest suite):
 
 ```bash
@@ -338,7 +336,7 @@ node tests/e2e/test-fhir-mcp.js
 npm run test:e2e        # scripts/lane-h-e2e.mjs
 ```
 
-## 🔧 Configuration
+## Configuration
 
 Read by the MCP server (`packages/mcp-fhir-server`):
 
@@ -358,11 +356,11 @@ Read by the MCP server (`packages/mcp-fhir-server`):
 | `AUDIT_SINK` | `stdout` writes audit records to stdout instead of stderr | stderr |
 | `NODE_ENV` | Standard | — |
 
-Read only by the `packages/examples/http-bridge` example, **not** by the MCP server: `ALLOWED_ORIGINS`, `REQUIRE_HTTPS`, `SECURITY_LOGGING`, `PORT`, `NODE_ENV`, `FHIR_BASE_URL`, `TERMINOLOGY_BASE_URL`.
+Read by the `packages/examples/http-bridge` example only, **not** by the MCP server: `ALLOWED_ORIGINS`, `REQUIRE_HTTPS`, `SECURITY_LOGGING`, `PORT`, `NODE_ENV`, `FHIR_BASE_URL`, `TERMINOLOGY_BASE_URL`.
 
-**Read by nothing.** These appeared in earlier documentation and have no effect anywhere in the repository: `CORS_CREDENTIALS`, `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX_REQUESTS`, `FHIR_RATE_LIMIT_MAX`, `WRITE_RATE_LIMIT_MAX`. Rate-limiter thresholds are currently compiled in, not configurable.
+Rate-limiter thresholds are compiled in, not configurable by environment variable.
 
-## 🤖 Using with Claude
+## Using with Claude
 
 ```json
 {
@@ -387,7 +385,7 @@ Run `npm run build` first — this config points at `dist/`, which is not in the
 
 Omit `MCP_SERVICE_PRINCIPAL_ID` and the server will start and answer `fhir.capabilities` and terminology calls normally, but every Patient read will come back as `Access denied: HEALTHCARE_COMPLIANCE_VIOLATION`.
 
-## 🌐 HTTP Bridge for Web Applications
+## HTTP Bridge for Web Applications
 
 For browser-based clients that cannot speak MCP directly.
 
@@ -443,7 +441,7 @@ The MCP server's own HTTP transport (`MCP_TRANSPORT=http`) exposes `/healthz` se
 - PHI-aware authorization, fail-closed without a principal
 - Audit logging on every allowed *and* denied read
 
-## 📋 Roadmap
+## Roadmap
 
 - [x] **MVP**: basic FHIR operations and terminology lookup
 - [x] **ES Modules**: modern JavaScript module support
@@ -451,13 +449,13 @@ The MCP server's own HTTP transport (`MCP_TRANSPORT=http`) exposes `/healthz` se
 - [x] **Docker**: containerized deployment
 - [x] **Test infrastructure**: jest running under ESM, golden corpus, PHI canary harness, enforced failure baseline (lane A)
 - [x] **PHI remediation lanes A–I**: fail-closed guard construction, masking rules, masking engine, authorization invariant, log-leak closure, caller identity, uniform tokenization
-- [ ] **Security Phase 1**: *not complete.* Four known open issues, one a live PHI exposure. See [Known open issues](#-known-open-issues). Previous revisions of this file marked this done; masking was unreachable in production until lane H and three PHI log leaks were open until lane G.
-- [ ] **QA**: *not complete.* 250/258 with 8 known failures; `QA-REPORT.md` is being rebuilt against the real suite.
+- [ ] **Security Phase 1**: *not complete.* Four known open issues, one a live PHI exposure. See [Known open issues](#known-open-issues). Previous revisions of this file marked this done; masking was unreachable in production until lane H and three PHI log leaks were open until lane G.
+- [ ] **QA**: *not complete.* 250/258 with 8 known failures; see [docs/QA-REPORT.md](docs/QA-REPORT.md).
 - [ ] **Phase 2**: real OAuth2 / SMART-on-FHIR token verification, advanced policy engine
 - [ ] **Phase 3**: delete operations, bulk export, R5 support
 - [ ] **Future**: GraphQL support, subscription webhooks
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
@@ -467,17 +465,14 @@ The MCP server's own HTTP transport (`MCP_TRANSPORT=http`) exposes `/healthz` se
 
 If a change makes a listed known issue stale, update this README in the same commit. If a change makes a `test-baseline.json` entry pass, delete that entry in the same commit — `test:gate` will fail otherwise, on purpose.
 
-## 📄 License
+## License
 
 MIT — see [LICENSE](LICENSE).
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - [HL7 FHIR](https://fhir.hl7.org/) for the interoperability standard
 - [Model Context Protocol](https://modelcontextprotocol.io/) for the protocol specification
 - [HAPI FHIR](https://hapifhir.io/) for the reference implementation
 - [HL7 Terminology Services](https://terminology.hl7.org/) for code system management
 
----
-
-**FHIR-MCP: Built with ❤️ for healthcare interoperability**

@@ -2,16 +2,16 @@
 
 This directory contains configuration and examples for using FhirMCP with Claude Desktop.
 
-## 🚀 Quick Setup
+## Quick Setup
 
 1. **Copy Configuration**:
    
-   **macOS**: 
+  **macOS**: 
    ```bash
    cp claude-config.json ~/Library/Application\ Support/Claude/claude_desktop_config.json
    ```
    
-   **Windows**:
+  **Windows**:
    ```bash
    copy claude-config.json %APPDATA%\Claude\claude_desktop_config.json
    ```
@@ -20,15 +20,16 @@ This directory contains configuration and examples for using FhirMCP with Claude
 
 3. **Restart Claude Desktop**
 
-## 🔧 Configuration Details
+## Configuration Details
 
 The `claude-config.json` configures Claude to:
+
 - Connect to your local FhirMCP server
 - Use PHI-safe mode for data protection  
 - Enable audit logging
 - Connect to HAPI FHIR and HL7 terminology services
 
-## 💬 Example Prompts
+## Example Prompts
 
 Once configured, you can ask Claude:
 
@@ -52,15 +53,22 @@ Once configured, you can ask Claude:
 "Expand the administrative-gender value set and show me the available codes"
 ```
 
-## 🛡️ Privacy Features
+## Before this returns any patient data
 
-Claude with FhirMCP automatically:
-- Masks patient names, addresses, and SSNs
-- Converts birth dates to ages
-- Removes government identifiers
-- Logs all operations with audit trails
+**Set a caller principal.** Without `MCP_SERVICE_PRINCIPAL_ID` and `MCP_SERVICE_PRINCIPAL_SCOPES`, every IDENTIFIABLE read is denied with `HEALTHCARE_COMPLIANCE_VIOLATION` and no resource body comes back. Add both to `claude-config.json` alongside `PHI_MODE`. Run `npm run build` first as well — the config points at `dist/`, which is gitignored.
 
-## 📊 Advanced Usage
+## What masking does
+
+In `safe` mode, on an IDENTIFIABLE resource:
+
+- `name` is replaced with `***`; `address`, `telecom` and `contact` are removed
+- `birthDate` is **removed**. There is no age field and no partial date — do not ask Claude to compute an age
+- `identifier` and `id` become per-process `PT_` pseudonym tokens. They are **not** stable across server restarts, so do not store them as patient keys
+- every operation is logged, including denied reads
+
+Known gap: free text on Condition, MedicationRequest, Procedure, CarePlan and DiagnosticReport is **not** masked and can carry a patient name into the conversation. See [SECURITY.md](../../../docs/SECURITY.md#known-open-security-issues).
+
+## Advanced Usage
 
 ### Clinical Decision Support
 ```
@@ -77,4 +85,4 @@ Claude with FhirMCP automatically:
 "Compare LOINC codes for different types of blood pressure measurements"
 ```
 
-This integration provides the most seamless experience for healthcare AI assistance with full FHIR compliance and PHI protection.
+Claude speaks MCP natively, so this integration needs no bridge process. It is not a compliance control on its own — read [SECURITY.md](../../../docs/SECURITY.md) before pointing it at real patient data.

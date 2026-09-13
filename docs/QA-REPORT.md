@@ -13,25 +13,11 @@
 | **Known failures** | 8, all enumerated with reasoning in `test-baseline.json` |
 | **Assessment** | Not production ready. Four known open security issues, one a live PHI exposure. |
 
-## Correction: the previous "19/19 (100%)" claim
+## Scope of this report
 
-Earlier revisions of this report, and of `README.md`, stated:
+The figures above come from one `npm run test:gate` run on this branch. They supersede the "19/19 tests passed (100% success rate)" and "Test Coverage: 100%" figures that earlier revisions of this report carried; those are withdrawn, not superseded, because the jest suite could not execute at all under ESM until lane A repaired the runner (`edbceca`). The full record of what was withdrawn and why is in [CHANGELOG.md](../CHANGELOG.md).
 
-> **Test Results:** 19/19 tests passed (100% success rate)
-> **Overall Assessment:** EXCELLENT - Production ready
-> **Overall Grade: A+ (Excellent)**
-> **Test Coverage: 100%**
-
-**That figure was not obtainable.** The jest suite could not execute at all under ESM until lane A repaired the runner — commit `edbceca`, "T0.1: repair jest under ESM so the test suite actually executes." There was no automated suite producing a pass rate at the time the claim was written, and no coverage measurement behind the "100% coverage" line. Both numbers should be treated as withdrawn rather than superseded.
-
-The same report's headline bug fix compounds the problem. It recorded, as a resolved CRITICAL issue:
-
-> **Resolution**: Updated sensitive fields array in `audit-logger.ts:76` from `'birthDate'` to `'birthdate'` to match lowercase comparison.
-> **Status**: ✅ FIXED and verified
-
-The mechanism being repaired there was a keyword **denylist** (`token|authorization|password|secret|ssn|birthdate`) applied to the top level of audit metadata only. A live run against a real FHIR server later wrote given names, family names and a nine-digit national ID into the audit log in clear text, because `name`, `identifier` and `id` were never on that list — and, as the replacement code now records in `audit-logger.ts:244-265`, `birthdate` *was* redacted, "which is precisely what made the control look like it was working."
-
-The denylist has since been replaced with a recursive structural **allowlist**. The lesson worth carrying forward is that the original QA pass verified the control against the cases the control already knew about, declared 100%, and shipped.
+One lesson from that episode is worth keeping in front of whoever reads this next. The earlier report's headline result was a CRITICAL bug "fixed" by changing `'birthDate'` to `'birthdate'` in an audit denylist. The denylist was the leak: it covered `token|authorization|password|secret|ssn|birthdate` and nothing else, so a live run against a real FHIR server wrote given names, family names and a nine-digit national ID into the audit log in clear text. Redacting `birthdate` correctly is precisely what made the control look like it was working. The denylist has since been replaced with a recursive structural allowlist. A control verified only against the cases it already knows about will pass every time.
 
 ## Known failures (8)
 
@@ -124,4 +110,4 @@ Recommended before any deployment against real patient data:
 
 ---
 
-*Status verified by running `npm run test:gate` on `integration/phase2`. Superseded figures from the September 12, 2025 revision of this report are corrected above rather than deleted, so the discrepancy stays visible.*
+*Status verified by running `npm run test:gate` on `integration/phase2`.*

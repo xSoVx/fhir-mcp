@@ -110,7 +110,7 @@ export MCP_SERVICE_PRINCIPAL_SCOPES="system/*.read"
 
 `PHI_MODE` accepts only `safe` or `trusted`; anything else is a startup error. `ENABLE_AUDIT` is on unless set to exactly `"false"`.
 
-Full variable table, including which are read only by the HTTP bridge example and which are read by nothing, is in the main [README](../README.md#-configuration).
+The full variable table, including which variables are read only by the HTTP bridge example, is in the main [README](../README.md#configuration).
 
 ## Running the Server
 
@@ -255,7 +255,7 @@ This is intentional unlinkability, but it means **any client that caches or stor
 
 ### Known gaps
 
-Free text is **not** masked on Condition (`note[].text`, `code.text`), MedicationRequest (`note[]`, `dosageInstruction[].text`), Procedure (`note[]`, `report[].display`), CarePlan (`description`) or DiagnosticReport (`presentedForm[].title`, `.url`). Observation and Encounter are clean. If you search those types, expect clinical notes to come through intact. See [SECURITY.md](SECURITY.md#-known-open-security-issues).
+Free text is **not** masked on Condition (`note[].text`, `code.text`), MedicationRequest (`note[]`, `dosageInstruction[].text`), Procedure (`note[]`, `report[].display`), CarePlan (`description`) or DiagnosticReport (`presentedForm[].title`, `.url`). Observation and Encounter are clean. If you search those types, expect clinical notes to come through intact. See [SECURITY.md](SECURITY.md#known-open-security-issues).
 
 ## Audit Logging
 
@@ -293,7 +293,7 @@ curl -s http://localhost:3001/health
 curl -s http://localhost:3001/tools
 ```
 
-These run against public HAPI FHIR and HL7 terminology servers. The 8 known failures and their reasoning are in `packages/mcp-fhir-server/test-baseline.json` and summarised in [QA-REPORT.md](../QA-REPORT.md).
+These run against public HAPI FHIR and HL7 terminology servers. The 8 known failures and their reasoning are in `packages/mcp-fhir-server/test-baseline.json` and summarised in [QA-REPORT.md](QA-REPORT.md).
 
 ## Using with Claude
 
@@ -354,11 +354,11 @@ const capabilities = await response.json();
 
 ### Logging verbosity
 
-There is no `DEBUG` environment variable — earlier versions of this guide suggested `DEBUG="fhir-mcp:*"`, which is read by nothing. The server writes its startup banner and all audit records to stderr; capture stderr to see them. `AUDIT_SINK=stdout` moves audit records to stdout.
+The server has no verbosity setting. It writes its startup banner and all audit records to stderr; capture stderr to see them. `AUDIT_SINK=stdout` moves audit records to stdout.
 
 ## Next Steps
 
 - [Prompt Library](PROMPTS.md) — LLM usage patterns
 - [Security Guide](SECURITY.md) — production deployment, PHI details, **and the four known open issues**
-- [QA-REPORT.md](../QA-REPORT.md) — current test status
+- [QA-REPORT.md](QA-REPORT.md) — current test status
 - `packages/examples/` — client implementations

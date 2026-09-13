@@ -7,9 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — `integration/phase2`
 
-PHI remediation lanes A–I, merged onto `integration/phase2` (35 commits ahead of `master`). No version number or release date is assigned: this branch is unreleased, and `packages/mcp-fhir-server/package.json` still reads `1.0.0` while the only tagged entry below is `0.1.0`. That discrepancy is pre-existing and is not resolved here.
+PHI remediation lanes A-I, merged onto `integration/phase2` (35 commits ahead of `master`). No version number or release date is assigned: this branch is unreleased.
 
-### ⚠️ Breaking
+**Unresolved: the project has three disagreeing version numbers.** Nothing here invents a fourth; this is recorded so it gets decided rather than guessed.
+
+| Source | Value |
+|---|---|
+| `package.json` (root), `packages/mcp-fhir-server`, `packages/examples/http-bridge` | `1.0.0` |
+| The version the server reports at runtime -- hardcoded in `src/index.ts:120`, `src/index.ts:234` and `src/http.ts:149`, and written into the `server.startup` audit record | `0.1.0` |
+| The only tagged entry in this file | `0.1.0` (2025-01-12) |
+
+The runtime value is the one that reaches MCP clients in the server identification handshake and the one that lands in audit records, so an audit trail on this branch currently attributes its entries to `0.1.0`. Whoever cuts the next release should pick a number, set it in one place, and have the other two read it.
+
+### Breaking
 
 - **Identity is now required to receive any IDENTIFIABLE or RESTRICTED resource body.** Without `MCP_SERVICE_PRINCIPAL_ID` configured, every such read is denied with `HEALTHCARE_COMPLIANCE_VIOLATION`. Before lane H the tool layer built its `SecurityContext` with no `userId`, so in practice every IDENTIFIABLE resource was suppressed *before* masking — the masking engine never ran in production. The new behaviour is fail-closed and deliberate, but it is a change from what the documentation described. See "Breaking change on this branch" in `README.md`.
 - **Pseudonym tokens (`PT_…`) are per-process.** The masking session key is `crypto.randomBytes(32)` with no persistence, so the same patient yields a different token after a restart. Cross-session longitudinal linkage is impossible by design; any consumer caching tokens as stable keys will break silently.
@@ -51,6 +61,13 @@ PHI remediation lanes A–I, merged onto `integration/phase2` (35 commits ahead 
 - Audit records are emitted on **stderr** by default. stdout is the MCP protocol channel, so an audit trail written there lands wherever the client pipes the protocol rather than in a log the covered entity controls.
 
 ### Documentation
+
+- Documentation cleaned up in a second pass. Claims that a first pass had annotated rather than removed are now deleted: the five environment variables read by nothing (`CORS_CREDENTIALS`, `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX_REQUESTS`, `FHIR_RATE_LIMIT_MAX`, `WRITE_RATE_LIMIT_MAX`) are gone from the docs rather than listed as inert; `npm run test:security` and `DEBUG="fhir-mcp:*"` are gone; the "no ML" and "no `AuditEvent`" notes now state what the code does instead of what earlier documentation said. `ALLOWED_ORIGINS`, `REQUIRE_HTTPS` and `SECURITY_LOGGING` are scoped to the `http-bridge` example, which is the only thing that reads them. `AUDIT_SINK` is documented.
+- Two prompt patterns in `docs/PROMPTS.md` that masking had broken were rewritten rather than annotated: the clinical-summary template no longer has an age line (`birthDate` is removed, so there is nothing to derive one from), and the batch-analysis loop now uses a single `_revinclude` search instead of feeding a masked `PT_` token back into a second query.
+- Emoji removed from every `.md` file; headings carry the structure. Semantic markers were converted to text rather than dropped.
+- `QA-REPORT.md` moved from the repository root to `docs/QA-REPORT.md`, alongside the other documentation.
+- `packages/examples/claude-client/README.md` and `packages/examples/copilot-integration/README.md` corrected. Both claimed masking that does not happen: "converts birth dates to ages" (`birthDate` is removed outright; the `applySafeguards()` code that computed an `age` field is on `PhiGuard.maskResource()`, which the tool surface never calls), "removes government identifiers" (they are tokenized, not removed), and "all data is automatically PHI-masked" (free text on several clinical types is not, and without a configured principal nothing is returned at all).
+- Removed committed process output from the repository root: `http-bridge-8081.err.txt`, `http-bridge-8081.out.txt`, `server.err.txt`, `server.out.txt` (startup banners) and `_testout.txt` (a captured jest run whose recorded results no longer match `test-baseline.json`). Added `.gitignore` rules so they do not come back.
 
 - `README.md` and `QA-REPORT.md` corrected. Withdrawn claims, each verified false against this branch: "19/19 tests passed (100% success rate)" (the suite could not run until lane A; the real figure is 250/258); "Phase 1 Security" and "QA" marked complete on the roadmap; SMART on FHIR / OAuth2 Authorization Code + PKCE / client credentials described as implemented (only two orphan type declarations exist); "ML-powered" PHI classification and anomaly detection (a static matrix plus regex field patterns); FHIR `AuditEvent` emission (none); tamper-proof and cryptographically validated audit logs (`console.error` output); `birthDate → "YYYY-**-**"` (removed outright); `identifier → "***"` (replaced with `PT_` tokens); bearer authentication required for all HTTP requests (only when `AUTH_TOKEN` is set — otherwise the bridge is open); and five documented environment variables read by nothing (`CORS_CREDENTIALS`, `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX_REQUESTS`, `FHIR_RATE_LIMIT_MAX`, `WRITE_RATE_LIMIT_MAX`).
 - Documented the `dist/` build trap: `dist/` is gitignored but load-bearing for `main`, `bin`, `npm start`, `npm run start:http` and the Dockerfile, while jest runs against `src/`. A green suite does not mean the deployed path is fixed.
